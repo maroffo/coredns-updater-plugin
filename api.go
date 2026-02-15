@@ -188,13 +188,9 @@ func (a *APIServer) handleDeleteByType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete all records matching name + type
-	records := a.store.Get(name, qtype)
-	for _, rec := range records {
-		if err := a.store.Delete(name, qtype, rec.Value); err != nil {
-			writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: err.Error()})
-			return
-		}
+	if err := a.store.DeleteByType(name, qtype); err != nil {
+		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: err.Error()})
+		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)

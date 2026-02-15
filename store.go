@@ -154,6 +154,30 @@ func (s *Store) Delete(name, qtype, value string) error {
 	return s.persist()
 }
 
+// DeleteByType removes all records matching the given FQDN and record type
+// in a single atomic operation (one lock, one persist).
+func (s *Store) DeleteByType(name, qtype string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := strings.ToLower(name)
+	recs := s.records[key]
+	filtered := make([]Record, 0, len(recs))
+	for _, r := range recs {
+		if !strings.EqualFold(r.Type, qtype) {
+			filtered = append(filtered, r)
+		}
+	}
+
+	if len(filtered) == 0 {
+		delete(s.records, key)
+	} else {
+		s.records[key] = filtered
+	}
+
+	return s.persist()
+}
+
 // DeleteAll removes every record for the given FQDN.
 func (s *Store) DeleteAll(name string) error {
 	s.mu.Lock()

@@ -393,6 +393,36 @@ func TestStore_CheckReload_NoDataLoss(t *testing.T) {
 	}
 }
 
+func TestStore_DeleteByType(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "records.json")
+
+	s, err := NewStore(fp, 0)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer s.Stop()
+
+	_ = s.Upsert(Record{Name: "app.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"})
+	_ = s.Upsert(Record{Name: "app.example.org.", Type: "A", TTL: 300, Value: "10.0.0.2"})
+	_ = s.Upsert(Record{Name: "app.example.org.", Type: "AAAA", TTL: 300, Value: "2001:db8::1"})
+
+	if err := s.DeleteByType("app.example.org.", "A"); err != nil {
+		t.Fatalf("DeleteByType() error: %v", err)
+	}
+
+	aRecords := s.Get("app.example.org.", "A")
+	if len(aRecords) != 0 {
+		t.Errorf("A records = %d, want 0", len(aRecords))
+	}
+
+	aaaaRecords := s.Get("app.example.org.", "AAAA")
+	if len(aaaaRecords) != 1 {
+		t.Errorf("AAAA records = %d, want 1", len(aaaaRecords))
+	}
+}
+
 func TestStore_Delete_NonExistent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
