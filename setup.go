@@ -36,6 +36,7 @@ type pluginConfig struct {
 	grpcNoAuth    bool
 
 	maxRecords int
+	syncPolicy SyncPolicy
 	fallArgs   []string
 }
 
@@ -54,6 +55,9 @@ func setup(c *caddy.Controller) error {
 	var storeOpts []StoreOption
 	if cfg.maxRecords > 0 {
 		storeOpts = append(storeOpts, WithMaxRecords(cfg.maxRecords))
+	}
+	if cfg.syncPolicy != PolicySync {
+		storeOpts = append(storeOpts, WithSyncPolicy(cfg.syncPolicy))
 	}
 
 	store, err := NewStore(cfg.datafile, cfg.reload, storeOpts...)
@@ -179,6 +183,16 @@ func parseConfig(c *caddy.Controller) (*pluginConfig, error) {
 				return nil, fmt.Errorf("max_records must be a non-negative integer: %q", c.Val())
 			}
 			cfg.maxRecords = n
+
+		case "sync_policy":
+			if !c.NextArg() {
+				return nil, fmt.Errorf("sync_policy requires an argument")
+			}
+			p, err := ParseSyncPolicy(c.Val())
+			if err != nil {
+				return nil, fmt.Errorf("invalid sync_policy: %w", err)
+			}
+			cfg.syncPolicy = p
 
 		case "fallthrough":
 			cfg.fallArgs = c.RemainingArgs()

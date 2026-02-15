@@ -176,6 +176,89 @@ func TestSetup_SeparateAllowedCN(t *testing.T) {
 	}
 }
 
+func TestSetup_SyncPolicyValid(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	input := `dynupdate example.org. {
+		datafile ` + dir + `/records.json
+		sync_policy create-only
+	}`
+
+	c := caddy.NewTestController("dns", input)
+	cfg, err := parseConfig(c)
+	if err != nil {
+		t.Fatalf("parseConfig() error: %v", err)
+	}
+	if cfg.syncPolicy != PolicyCreateOnly {
+		t.Errorf("syncPolicy = %v, want %v", cfg.syncPolicy, PolicyCreateOnly)
+	}
+}
+
+func TestSetup_SyncPolicySync(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	input := `dynupdate example.org. {
+		datafile ` + dir + `/records.json
+		sync_policy sync
+	}`
+
+	c := caddy.NewTestController("dns", input)
+	cfg, err := parseConfig(c)
+	if err != nil {
+		t.Fatalf("parseConfig() error: %v", err)
+	}
+	if cfg.syncPolicy != PolicySync {
+		t.Errorf("syncPolicy = %v, want %v", cfg.syncPolicy, PolicySync)
+	}
+}
+
+func TestSetup_SyncPolicyMissingArg(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	input := `dynupdate example.org. {
+		datafile ` + dir + `/records.json
+		sync_policy
+	}`
+
+	c := caddy.NewTestController("dns", input)
+	_, err := parseConfig(c)
+	if err == nil {
+		t.Fatal("parseConfig() expected error for missing sync_policy argument")
+	}
+}
+
+func TestSetup_SyncPolicyInvalid(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	input := `dynupdate example.org. {
+		datafile ` + dir + `/records.json
+		sync_policy delete-only
+	}`
+
+	c := caddy.NewTestController("dns", input)
+	_, err := parseConfig(c)
+	if err == nil {
+		t.Fatal("parseConfig() expected error for invalid sync_policy value")
+	}
+}
+
+func TestSetup_SyncPolicyOmittedDefaultsToSync(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	input := `dynupdate example.org. {
+		datafile ` + dir + `/records.json
+	}`
+
+	c := caddy.NewTestController("dns", input)
+	cfg, err := parseConfig(c)
+	if err != nil {
+		t.Fatalf("parseConfig() error: %v", err)
+	}
+	if cfg.syncPolicy != PolicySync {
+		t.Errorf("syncPolicy = %v, want %v (default)", cfg.syncPolicy, PolicySync)
+	}
+}
+
 func TestSetup_FallthroughWithZones(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
