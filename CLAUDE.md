@@ -87,14 +87,26 @@ Auth is **fail-closed**: a `listen` directive without `token`, `allowed_cn`, or 
 | `google.golang.org/grpc` | gRPC framework |
 | `google.golang.org/protobuf` | Protocol Buffers runtime |
 
+### Store Internals
+
+- Keyed by FQDN with trailing dot (e.g., `"app.example.org."`). All lookups and mutations use this format.
+- Record TTL constraints: `DefaultTTL=3600`, `MinTTL=60`, `MaxTTL=86400` (enforced in `Record.Validate()`).
+
 ## Proto Generation
 
-Requires `protoc`, `protoc-gen-go`, and `protoc-gen-go-grpc` installed. Run `make proto` to regenerate from `proto/dynupdate.proto`.
+Requires `protoc`, `protoc-gen-go`, and `protoc-gen-go-grpc` installed. Run `make proto` to regenerate from `proto/dynupdate.proto`. Files `proto/dynupdate.pb.go` and `proto/dynupdate_grpc.pb.go` are generated; do not edit by hand.
 
 ## Examples Directory
 
 - `Corefile.tailscale` / `Corefile.tls`: production Corefile configurations
 - `dynupdate_watcher.py` / `dynupdate-watcher.sh`: network interface monitors that auto-upsert A/AAAA records
+- `dynupdate-watcher.service`: systemd unit file for running the bash watcher as a managed service
+
+## Testing Patterns
+
+- Every component has a corresponding `_test.go`; `integration_test.go` covers end-to-end API-to-DNS flows.
+- Tests use `t.Parallel()` and `t.TempDir()` for isolation. API tests use `httptest.NewServer`/`httptest.NewRecorder`.
+- Store tests create temporary JSON files; no shared state between test cases.
 
 ## Conventions
 

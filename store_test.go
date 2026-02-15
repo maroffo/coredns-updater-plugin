@@ -825,6 +825,40 @@ func TestStore_DeleteAll_SyncPolicy(t *testing.T) {
 	}
 }
 
+func TestStore_Upsert_PolicyCreateOnly_DoesNotCorrupt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "records.json")
+
+	s, err := NewStore(fp, 0, WithSyncPolicy(PolicyCreateOnly))
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer s.Stop()
+
+	// Create initial record
+	orig := Record{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"}
+	if err := s.Upsert(orig); err != nil {
+		t.Fatalf("Upsert(create) error: %v", err)
+	}
+
+	// Attempt update (should be rejected by policy)
+	updated := Record{Name: "a.example.org.", Type: "A", TTL: 600, Value: "10.0.0.1"}
+	err = s.Upsert(updated)
+	if !errors.Is(err, ErrPolicyDenied) {
+		t.Fatalf("Upsert(update) error = %v, want ErrPolicyDenied", err)
+	}
+
+	// Verify in-memory state was NOT corrupted by the rejected update
+	records := s.Get("a.example.org.", "A")
+	if len(records) != 1 {
+		t.Fatalf("Get() returned %d records, want 1", len(records))
+	}
+	if records[0].TTL != 300 {
+		t.Errorf("TTL = %d, want 300 (original); in-memory state corrupted by rejected update", records[0].TTL)
+	}
+}
+
 func TestStore_LoadFromTestdata(t *testing.T) {
 	t.Parallel()
 
