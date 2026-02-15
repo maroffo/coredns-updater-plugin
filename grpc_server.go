@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"time"
 
 	pb "github.com/mauromedda/coredns-updater-plugin/proto"
 	"google.golang.org/grpc"
@@ -63,12 +64,21 @@ func (g *GRPCServer) Start() error {
 	return nil
 }
 
-// Stop gracefully shuts down the gRPC server.
+// Stop gracefully shuts down the gRPC server with a timeout.
 func (g *GRPCServer) Stop() {
 	if g.server == nil {
 		return
 	}
-	g.server.GracefulStop()
+	done := make(chan struct{})
+	go func() {
+		g.server.GracefulStop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		g.server.Stop()
+	}
 }
 
 // grpcService implements the DynUpdateService.

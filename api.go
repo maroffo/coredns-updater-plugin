@@ -147,6 +147,7 @@ func (a *APIServer) handleGetByName(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *APIServer) handleCreate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 	var rec Record
 	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
 		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: fmt.Sprintf("invalid JSON: %v", err)})
@@ -171,6 +172,7 @@ func (a *APIServer) handleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *APIServer) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 	var rec Record
 	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
 		writeJSON(w, http.StatusBadRequest, apiErrorResponse{Error: fmt.Sprintf("invalid JSON: %v", err)})

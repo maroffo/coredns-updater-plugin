@@ -80,6 +80,9 @@ type Store struct {
 	ready      bool
 	maxRecords int
 	syncPolicy SyncPolicy
+	persistMu  sync.Mutex // serializes file writes, independent of mu
+	generation uint64     // incremented on each mutation (under mu)
+	persisted  uint64     // generation of last successful persist (under persistMu, updated under mu)
 }
 
 // StoreOption configures optional Store behaviour.
@@ -183,45 +186,66 @@ func (s *Store) List() []Record {
 // Upsert adds or updates a record. Matching is done on name+type+value.
 // The file is persisted atomically after the operation.
 func (s *Store) Upsert(r Record) error {
+	snapshot, gen, err := s.applyUpsert(r)
+	if err != nil {
+		return err
+	}
+	return s.persistSnapshot(snapshot, gen)
+}
+
+func (s *Store) applyUpsert(r Record) ([]Record, uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	key := strings.ToLower(r.Name)
 	recs := s.records[key]
 
-	found := false
+	idx := -1
 	for i, existing := range recs {
 		if strings.EqualFold(existing.Type, r.Type) && existing.Value == r.Value {
-			recs[i] = r
-			found = true
+			idx = i
 			break
 		}
 	}
+	found := idx >= 0
+
+	// Policy check before mutation
 	switch {
 	case s.syncPolicy == PolicyCreateOnly && found:
-		return fmt.Errorf("cannot update record %s (type %s): %w", r.Name, r.Type, ErrPolicyDenied)
+		return nil, 0, fmt.Errorf("cannot update record %s (type %s): %w", r.Name, r.Type, ErrPolicyDenied)
 	case s.syncPolicy == PolicyUpdateOnly && !found:
-		return fmt.Errorf("cannot create record %s (type %s): %w", r.Name, r.Type, ErrPolicyDenied)
+		return nil, 0, fmt.Errorf("cannot create record %s (type %s): %w", r.Name, r.Type, ErrPolicyDenied)
 	}
 
-	if !found {
+	if found {
+		recs[idx] = r
+	} else {
 		if s.maxRecords > 0 && s.countLocked() >= s.maxRecords {
-			return fmt.Errorf("record limit of %d reached", s.maxRecords)
+			return nil, 0, fmt.Errorf("record limit of %d reached", s.maxRecords)
 		}
 		recs = append(recs, r)
 	}
 	s.records[key] = recs
 
-	return s.persist()
+	s.generation++
+	return s.collectLocked(), s.generation, nil
 }
 
 // Delete removes a specific record identified by name, type, and value.
 func (s *Store) Delete(name, qtype, value string) error {
+	snapshot, gen, err := s.applyDelete(name, qtype, value)
+	if err != nil {
+		return err
+	}
+	return s.persistSnapshot(snapshot, gen)
+}
+
+func (s *Store) applyDelete(name, qtype, value string) ([]Record, uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.syncPolicy != PolicySync {
-		return fmt.Errorf("delete denied: %w", ErrPolicyDenied)
+		return nil, 0, fmt.Errorf("delete denied: %w", ErrPolicyDenied)
 	}
 
 	key := strings.ToLower(name)
@@ -240,17 +264,26 @@ func (s *Store) Delete(name, qtype, value string) error {
 		s.records[key] = filtered
 	}
 
-	return s.persist()
+	s.generation++
+	return s.collectLocked(), s.generation, nil
 }
 
 // DeleteByType removes all records matching the given FQDN and record type
 // in a single atomic operation (one lock, one persist).
 func (s *Store) DeleteByType(name, qtype string) error {
+	snapshot, gen, err := s.applyDeleteByType(name, qtype)
+	if err != nil {
+		return err
+	}
+	return s.persistSnapshot(snapshot, gen)
+}
+
+func (s *Store) applyDeleteByType(name, qtype string) ([]Record, uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.syncPolicy != PolicySync {
-		return fmt.Errorf("delete denied: %w", ErrPolicyDenied)
+		return nil, 0, fmt.Errorf("delete denied: %w", ErrPolicyDenied)
 	}
 
 	key := strings.ToLower(name)
@@ -268,29 +301,48 @@ func (s *Store) DeleteByType(name, qtype string) error {
 		s.records[key] = filtered
 	}
 
-	return s.persist()
+	s.generation++
+	return s.collectLocked(), s.generation, nil
 }
 
 // DeleteAll removes every record for the given FQDN.
 func (s *Store) DeleteAll(name string) error {
+	snapshot, gen, err := s.applyDeleteAll(name)
+	if err != nil {
+		return err
+	}
+	return s.persistSnapshot(snapshot, gen)
+}
+
+func (s *Store) applyDeleteAll(name string) ([]Record, uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.syncPolicy != PolicySync {
-		return fmt.Errorf("delete denied: %w", ErrPolicyDenied)
+		return nil, 0, fmt.Errorf("delete denied: %w", ErrPolicyDenied)
 	}
 
 	key := strings.ToLower(name)
 	delete(s.records, key)
 
-	return s.persist()
+	s.generation++
+	return s.collectLocked(), s.generation, nil
 }
 
-// persist writes all records to the backing file atomically.
-func (s *Store) persist() error {
-	all := s.collectLocked()
-	data := storeFile{Records: all}
+// persistSnapshot writes the given records to the backing file atomically.
+// Serialized by persistMu; skips if a newer generation was already persisted.
+// Must NOT be called with s.mu held.
+func (s *Store) persistSnapshot(all []Record, gen uint64) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 
+	// A newer snapshot was already written; this one is stale.
+	// Safe without mu: persistMu serializes all callers, so s.persisted cannot change concurrently.
+	if gen > 0 && gen <= s.persisted {
+		return nil
+	}
+
+	data := storeFile{Records: all}
 	raw, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshalling store: %w", err)
@@ -318,12 +370,15 @@ func (s *Store) persist() error {
 		return fmt.Errorf("renaming temp to %s: %w", s.filePath, err)
 	}
 
-	// Update lastMod to prevent self-triggered reload
+	// Update metadata under mu to prevent self-triggered reload.
+	s.mu.Lock()
+	s.persisted = gen
 	if info, err := os.Stat(s.filePath); err == nil {
 		s.lastMod = info.ModTime()
 	}
-
 	s.updateRecordGaugeLocked()
+	s.mu.Unlock()
+
 	return nil
 }
 
@@ -365,7 +420,7 @@ func (s *Store) loadOrCreate() error {
 	if os.IsNotExist(err) {
 		// Create empty file
 		s.records = make(map[string][]Record)
-		return s.persist()
+		return s.persistSnapshot(nil, 0)
 	}
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", s.filePath, err)
@@ -410,21 +465,50 @@ func (s *Store) run() {
 }
 
 func (s *Store) checkReload() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Skip if a persist is actively running to avoid overwriting in-flight mutations.
+	if !s.persistMu.TryLock() {
+		return
+	}
+	s.persistMu.Unlock()
+
+	// Phase 1: check mtime under lock (fast path).
+	s.mu.RLock()
+	if s.generation > s.persisted {
+		s.mu.RUnlock()
+		return
+	}
+	lastMod := s.lastMod
+	s.mu.RUnlock()
 
 	info, err := os.Stat(s.filePath)
 	if err != nil {
 		return
 	}
+	if !info.ModTime().After(lastMod) {
+		return
+	}
+
+	// Phase 2: read file outside any lock.
+	raw, err := os.ReadFile(s.filePath)
+	if err != nil {
+		log.Errorf("reload %s: read error: %v", s.filePath, err)
+		return
+	}
+
+	// Phase 3: re-verify under write lock and swap.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// A mutation may have landed while we were reading; skip if so.
+	if s.generation > s.persisted {
+		return
+	}
+	// Re-check mtime: another reload or persist may have updated lastMod.
 	if !info.ModTime().After(s.lastMod) {
 		return
 	}
 
-	raw, err := os.ReadFile(s.filePath)
-	if err != nil {
-		return
+	if err := s.loadFromBytes(raw); err != nil {
+		log.Errorf("reload %s: parse error: %v", s.filePath, err)
 	}
-
-	_ = s.loadFromBytes(raw)
 }
