@@ -28,8 +28,8 @@ Type=simple
 EnvironmentFile=/etc/default/dynupdate-watcher
 ExecStart=/usr/local/bin/dynupdate-watcher.sh \
     -i tailscale0 \
-    -n %H.prjxai.xyz. \
-    -u http://spark.prjxai.xyz:9090 \
+    -n %H.example.org. \
+    -u http://dns.example.org:9090 \
     -I 15
 Restart=on-failure
 RestartSec=10
