@@ -1,0 +1,31 @@
+// ABOUTME: gRPC service definition for dynamic DNS record management.
+// ABOUTME: Defines List, Upsert, and Delete RPCs with Record message type.
+
+syntax = "proto3";
+package dynupdate.v1;
+option go_package = "github.com/mauromedda/coredns-updater-plugin/proto";
+
+message Record {
+  string name     = 1;
+  string type     = 2;
+  uint32 ttl      = 3;
+  string value    = 4;
+  uint32 priority = 5;
+  uint32 weight   = 6;
+  uint32 port     = 7;
+  uint32 flag     = 8;
+  string tag      = 9;
+}
+
+message ListRequest   { string name = 1; }
+message ListResponse  { repeated Record records = 1; }
+message UpsertRequest { Record record = 1; }
+message UpsertResponse{ Record record = 1; }
+message DeleteRequest { string name = 1; string type = 2; string value = 3; }
+message DeleteResponse{}
+
+service DynUpdateService {
+  rpc List(ListRequest) returns (ListResponse);
+  rpc Upsert(UpsertRequest) returns (UpsertResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+}
