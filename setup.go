@@ -35,9 +35,10 @@ type pluginConfig struct {
 	grpcAllowedCN []string
 	grpcNoAuth    bool
 
-	maxRecords int
-	syncPolicy SyncPolicy
-	fallArgs   []string
+	maxRecords  int
+	syncPolicy  SyncPolicy
+	enableFall  bool
+	fallArgs    []string
 }
 
 type tlsConfig struct {
@@ -70,7 +71,7 @@ func setup(c *caddy.Controller) error {
 		Store: store,
 	}
 
-	if cfg.fallArgs != nil {
+	if cfg.enableFall {
 		d.Fall.SetZonesFromArgs(cfg.fallArgs)
 	}
 
@@ -195,6 +196,7 @@ func parseConfig(c *caddy.Controller) (*pluginConfig, error) {
 			cfg.syncPolicy = p
 
 		case "fallthrough":
+			cfg.enableFall = true
 			cfg.fallArgs = c.RemainingArgs()
 
 		default:
