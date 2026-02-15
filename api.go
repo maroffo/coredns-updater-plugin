@@ -5,6 +5,7 @@ package dynupdate
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -56,6 +57,15 @@ func (a *APIServer) Start() error {
 	ln, err := net.Listen("tcp", a.listen)
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", a.listen, err)
+	}
+
+	if a.tls != nil {
+		tlsCfg, err := buildTLSConfig(a.tls)
+		if err != nil {
+			ln.Close()
+			return fmt.Errorf("building API TLS config: %w", err)
+		}
+		ln = tls.NewListener(ln, tlsCfg)
 	}
 
 	a.server = &http.Server{

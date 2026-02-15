@@ -11,6 +11,7 @@ import (
 	pb "github.com/mauromedda/coredns-updater-plugin/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 )
 
@@ -37,6 +38,15 @@ func (g *GRPCServer) Start() error {
 
 	opts := []grpc.ServerOption{
 		grpc.UnaryInterceptor(g.auth.UnaryInterceptor),
+	}
+
+	if g.tls != nil {
+		tlsCfg, err := buildTLSConfig(g.tls)
+		if err != nil {
+			ln.Close()
+			return fmt.Errorf("building gRPC TLS config: %w", err)
+		}
+		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsCfg)))
 	}
 
 	g.server = grpc.NewServer(opts...)
