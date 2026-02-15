@@ -566,6 +566,38 @@ func TestSyncPolicy_String(t *testing.T) {
 	}
 }
 
+func TestWithSyncPolicy(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "records.json")
+
+	s, err := NewStore(fp, 0, WithSyncPolicy(PolicyCreateOnly))
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer s.Stop()
+
+	if s.syncPolicy != PolicyCreateOnly {
+		t.Errorf("syncPolicy = %v, want %v", s.syncPolicy, PolicyCreateOnly)
+	}
+}
+
+func TestStore_DefaultSyncPolicy(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "records.json")
+
+	s, err := NewStore(fp, 0)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer s.Stop()
+
+	if s.syncPolicy != PolicySync {
+		t.Errorf("default syncPolicy = %v, want %v", s.syncPolicy, PolicySync)
+	}
+}
+
 func TestStore_LoadFromTestdata(t *testing.T) {
 	t.Parallel()
 

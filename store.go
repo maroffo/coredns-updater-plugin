@@ -5,6 +5,7 @@ package dynupdate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,9 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrPolicyDenied is returned when a mutation is rejected by the sync policy.
+var ErrPolicyDenied = errors.New("operation denied by sync policy")
 
 // SyncPolicy controls which mutation operations the store permits.
 type SyncPolicy uint8
@@ -75,6 +79,7 @@ type Store struct {
 	stopCh     chan struct{}
 	ready      bool
 	maxRecords int
+	syncPolicy SyncPolicy
 }
 
 // StoreOption configures optional Store behaviour.
@@ -85,6 +90,13 @@ type StoreOption func(*Store)
 func WithMaxRecords(n int) StoreOption {
 	return func(s *Store) {
 		s.maxRecords = n
+	}
+}
+
+// WithSyncPolicy sets the mutation policy for the store.
+func WithSyncPolicy(p SyncPolicy) StoreOption {
+	return func(s *Store) {
+		s.syncPolicy = p
 	}
 }
 
