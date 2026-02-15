@@ -1,0 +1,13 @@
+{
+  "records": [
+    {"name": "app.example.org.", "type": "A", "ttl": 300, "value": "10.0.0.1"},
+    {"name": "app.example.org.", "type": "AAAA", "ttl": 300, "value": "2001:db8::1"},
+    {"name": "mail.example.org.", "type": "MX", "ttl": 3600, "value": "mx1.example.org.", "priority": 10},
+    {"name": "alias.example.org.", "type": "CNAME", "ttl": 300, "value": "app.example.org."},
+    {"name": "app.example.org.", "type": "TXT", "ttl": 3600, "value": "v=spf1 include:example.org ~all"},
+    {"name": "_sip._tcp.example.org.", "type": "SRV", "ttl": 3600, "value": "sip.example.org.", "priority": 10, "weight": 60, "port": 5060},
+    {"name": "example.org.", "type": "NS", "ttl": 3600, "value": "ns1.example.org."},
+    {"name": "1.0.0.10.in-addr.arpa.", "type": "PTR", "ttl": 3600, "value": "app.example.org."},
+    {"name": "example.org.", "type": "CAA", "ttl": 3600, "value": "letsencrypt.org", "flag": 0, "tag": "issue"}
+  ]
+}
