@@ -1,0 +1,656 @@
+# dynupdate — CoreDNS Plugin for Dynamic DNS Record Management
+
+> Source: https://github.com/mauromedda/coredns-updater-plugin
+> License: Apache 2.0
+> Language: Go 1.25.6
+> Module: github.com/mauromedda/coredns-updater-plugin
+
+## Overview
+
+dynupdate is a CoreDNS plugin that allows authenticated clients to create, update, and delete DNS records at runtime through a REST API and gRPC interface. Records are stored in memory for fast lookups, backed by atomic JSON persistence for durability across restarts.
+
+Supported record types: A, AAAA, CNAME, TXT, MX, SRV, NS, PTR, CAA.
+
+CNAME chasing is built in: querying an alias automatically resolves the full chain within the plugin's store (up to 10 hops).
+
+Authentication supports Bearer tokens and mTLS client certificate validation, applied to both REST and gRPC endpoints. Authentication is fail-closed: any `api` or `grpc` block with a `listen` directive must configure at least one auth method (`token`, `allowed_cn`) or explicitly opt out with `no_auth`.
+
+## Corefile Syntax
+
+```
+dynupdate [ZONES...] {
+    datafile    PATH
+    reload      DURATION
+    max_records N
+    sync_policy MODE
+
+    api {
+        listen     ADDR
+        token      SECRET
+        tls        CERT KEY CA
+        allowed_cn CN [CN...]
+        no_auth
+    }
+
+    grpc {
+        listen     ADDR
+        token      SECRET
+        tls        CERT KEY CA
+        allowed_cn CN [CN...]
+        no_auth
+    }
+
+    fallthrough [ZONES...]
+}
+```
+
+### Directive Reference
+
+- **ZONES**: the zones this plugin is authoritative for. Defaults to the server block zones.
+- **datafile PATH** (required): path to the JSON file for record persistence.
+- **reload DURATION**: interval for checking external file modifications (e.g. `30s`). Disabled if omitted.
+- **max_records N**: maximum number of records the store will hold. New inserts beyond this limit are rejected; updates to existing records are always allowed. A value of 0 (default) means unlimited.
+- **sync_policy MODE**: controls which mutation operations are permitted:
+  - `sync` (default, alias: `crud`): full create, update, and delete authority.
+  - `create-only`: only new records can be created; updates and deletes are denied.
+  - `update-only`: only existing records can be updated; creates and deletes are denied.
+  - `upsert-only`: records can be created and updated; deletes are denied.
+  Policy violations return HTTP 403 (REST) or gRPC `PermissionDenied`.
+- **api block**: configure the REST API server. When `listen` is set, at least one of `token`, `allowed_cn`, or `no_auth` is required.
+  - `listen ADDR`: address to bind (e.g. `:8080`).
+  - `token SECRET`: Bearer token for authentication.
+  - `tls CERT KEY CA`: TLS certificate, key, and optional CA for HTTPS. When CA is provided, mTLS with client certificate verification is enforced.
+  - `allowed_cn CN...`: allowed client certificate Common Names (requires `tls` with CA).
+  - `no_auth`: explicitly disable authentication. Use with caution; only appropriate for loopback or trusted-network deployments.
+- **grpc block**: configure the gRPC server. Same directives as `api`.
+- **fallthrough [ZONES...]**: if a query is not found, pass it to the next plugin. Optionally restricted to specific zones.
+
+### Authentication Model
+
+The `api` and `grpc` blocks use fail-closed authentication. If a `listen` address is configured, the plugin refuses to start unless one of the following is present:
+
+| Directive       | Effect                                                    |
+|-----------------|-----------------------------------------------------------|
+| `token SECRET`  | Require `Authorization: Bearer SECRET` header             |
+| `allowed_cn CN` | Require client certificate with matching Common Name      |
+| `no_auth`       | Explicitly allow unauthenticated access                   |
+
+When both `token` and `allowed_cn` are configured, a request is authorized if either credential is valid. When `tls` includes a CA, all clients must present a valid certificate (mTLS); token-based auth operates as an additional layer on top.
+
+Token comparison uses `crypto/subtle.ConstantTimeCompare` to prevent timing attacks.
+
+### TLS Configuration
+
+The `tls` directive accepts three positional arguments: `tls CERT KEY CA`
+
+| Argument | Purpose                                                                        |
+|----------|--------------------------------------------------------------------------------|
+| CERT     | Path to the server certificate (PEM)                                           |
+| KEY      | Path to the server private key (PEM)                                           |
+| CA       | Path to the CA certificate (PEM) for client verification. When provided, mTLS is enforced with RequireAndVerifyClientCert. Omit or pass an empty CA for server-only TLS. |
+
+The minimum TLS version is 1.2.
+
+## REST API
+
+Base path: `/api/v1/records`
+
+| Method | Path                            | Description                              | Success | Error         |
+|--------|---------------------------------|------------------------------------------|---------|---------------|
+| GET    | `/api/v1/records`               | List all records (optional `?name=` filter) | 200  |               |
+| GET    | `/api/v1/records/{name}`        | Get records for a name                   | 200     |               |
+| POST   | `/api/v1/records`               | Create/upsert a record                   | 201     | 400, 403, 500 |
+| PUT    | `/api/v1/records`               | Update a record (upsert)                 | 200     | 400, 403, 500 |
+| DELETE | `/api/v1/records/{name}`        | Delete all records for a name            | 204     | 400, 403, 500 |
+| DELETE | `/api/v1/records/{name}/{type}` | Delete records by name and type          | 204     | 400, 403, 500 |
+
+Authentication: `Authorization: Bearer <token>` header, or mTLS client certificate.
+
+### Request/Response Format
+
+Create or update a record (POST/PUT body):
+
+```json
+{
+  "name": "app.example.org.",
+  "type": "A",
+  "ttl": 300,
+  "value": "10.0.0.1"
+}
+```
+
+For MX records, include `priority`:
+```json
+{
+  "name": "mail.example.org.",
+  "type": "MX",
+  "ttl": 3600,
+  "value": "mx1.example.org.",
+  "priority": 10
+}
+```
+
+For SRV records, include `priority`, `weight`, and `port`:
+```json
+{
+  "name": "_sip._tcp.example.org.",
+  "type": "SRV",
+  "ttl": 3600,
+  "value": "sip.example.org.",
+  "priority": 10,
+  "weight": 60,
+  "port": 5060
+}
+```
+
+For CAA records, include `flag` and `tag`:
+```json
+{
+  "name": "example.org.",
+  "type": "CAA",
+  "ttl": 3600,
+  "value": "letsencrypt.org",
+  "flag": 0,
+  "tag": "issue"
+}
+```
+
+List response:
+```json
+{
+  "records": [
+    {"name": "app.example.org.", "type": "A", "ttl": 300, "value": "10.0.0.1"}
+  ]
+}
+```
+
+Error response:
+```json
+{
+  "error": "description of the error"
+}
+```
+
+## gRPC API
+
+Service: `dynupdate.v1.DynUpdateService`
+
+| RPC      | Request                              | Response                      |
+|----------|--------------------------------------|-------------------------------|
+| `List`   | `ListRequest{name}`                  | `ListResponse{records}`       |
+| `Upsert` | `UpsertRequest{record}`              | `UpsertResponse{record}`      |
+| `Delete` | `DeleteRequest{name, type, value}`   | `DeleteResponse{}`            |
+
+### Proto Definition
+
+```protobuf
+syntax = "proto3";
+package dynupdate.v1;
+option go_package = "github.com/mauromedda/coredns-updater-plugin/proto";
+
+message Record {
+  string name     = 1;
+  string type     = 2;
+  uint32 ttl      = 3;
+  string value    = 4;
+  uint32 priority = 5;
+  uint32 weight   = 6;
+  uint32 port     = 7;
+  uint32 flag     = 8;
+  string tag      = 9;
+}
+
+message ListRequest   { string name = 1; }
+message ListResponse  { repeated Record records = 1; }
+message UpsertRequest { Record record = 1; }
+message UpsertResponse{ Record record = 1; }
+message DeleteRequest { string name = 1; string type = 2; string value = 3; }
+message DeleteResponse{}
+
+service DynUpdateService {
+  rpc List(ListRequest) returns (ListResponse);
+  rpc Upsert(UpsertRequest) returns (UpsertResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+}
+```
+
+gRPC authentication: `authorization: Bearer <token>` metadata, or mTLS client certificate.
+
+Values passed via gRPC are bounds-checked before narrowing: `priority`, `weight`, and `port` must fit in uint16 (0-65535), and `flag` must fit in uint8 (0-255). Values exceeding these bounds return `InvalidArgument`.
+
+## Record Validation Rules
+
+All records:
+- `name` must not be empty and must end with a trailing dot (FQDN).
+- Consecutive dots (`..`) are rejected.
+- Individual labels must not exceed 63 characters.
+- Total name length must not exceed 253 characters.
+- `type` is normalised to uppercase; must be one of: A, AAAA, CNAME, TXT, MX, SRV, NS, PTR, CAA.
+- `ttl` defaults to 3600 if omitted; valid range is 60-86400 seconds.
+
+Per-type validation:
+- **A**: value must be a valid IPv4 address.
+- **AAAA**: value must be a valid IPv6 address.
+- **CNAME, NS, PTR**: value must be a FQDN with trailing dot.
+- **TXT**: value must not be empty. Long values are split into 255-byte chunks per RFC 4408.
+- **MX**: value must be a FQDN with trailing dot. Uses the `priority` field.
+- **SRV**: value (target) must be a FQDN with trailing dot. `port` must be non-zero. Uses `priority`, `weight`, `port` fields.
+- **CAA**: value and `tag` must not be empty. Valid tags: `issue`, `issuewild`, `iodef`. Uses the `flag` field.
+
+## Record Persistence Format
+
+Records are persisted to the datafile as JSON:
+
+```json
+{
+  "records": [
+    {"name": "app.example.org.", "type": "A", "ttl": 300, "value": "10.0.0.1"},
+    {"name": "app.example.org.", "type": "AAAA", "ttl": 300, "value": "2001:db8::1"},
+    {"name": "mail.example.org.", "type": "MX", "ttl": 3600, "value": "mx1.example.org.", "priority": 10},
+    {"name": "alias.example.org.", "type": "CNAME", "ttl": 300, "value": "app.example.org."},
+    {"name": "app.example.org.", "type": "TXT", "ttl": 3600, "value": "v=spf1 include:example.org ~all"},
+    {"name": "_sip._tcp.example.org.", "type": "SRV", "ttl": 3600, "value": "sip.example.org.", "priority": 10, "weight": 60, "port": 5060},
+    {"name": "example.org.", "type": "NS", "ttl": 3600, "value": "ns1.example.org."},
+    {"name": "1.0.0.10.in-addr.arpa.", "type": "PTR", "ttl": 3600, "value": "app.example.org."},
+    {"name": "example.org.", "type": "CAA", "ttl": 3600, "value": "letsencrypt.org", "flag": 0, "tag": "issue"}
+  ]
+}
+```
+
+File writes are atomic: data is written to a temporary file in the same directory, then renamed to the target path. This prevents partial writes from corrupting the store.
+
+When `reload` is configured, the store polls the file's modification time at the specified interval and reloads if an external tool has modified it. The store tracks the last modification time to avoid self-triggered reloads after its own writes.
+
+## Prometheus Metrics
+
+When the `prometheus` plugin is enabled in CoreDNS, the following metrics are exported:
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `coredns_dynupdate_request_count_total` | `server` | Total DNS requests handled |
+| `coredns_dynupdate_response_rcode_count_total` | `server`, `rcode` | DNS responses by response code |
+| `coredns_dynupdate_api_request_count_total` | `method`, `status` | REST API requests by HTTP method and status |
+| `coredns_dynupdate_store_records` | `type` | Current number of records by record type (gauge) |
+
+## Readiness
+
+The plugin reports readiness to the CoreDNS `ready` plugin. It becomes ready once the backing JSON file has been loaded (or created on first run).
+
+## Plugin Architecture
+
+### CoreDNS Plugin Lifecycle
+
+```
+init()
+  └─ plugin.Register("dynupdate", setup)
+
+setup(caddy.Controller)
+  ├─ parseConfig(c)                  → pluginConfig from Corefile
+  ├─ NewStore(datafile, reload)      → in-memory store + JSON persistence
+  ├─ NewAPIServer(store, auth, ...)  → REST endpoint (HTTP)
+  ├─ NewGRPCServer(store, auth, ...) → gRPC endpoint
+  ├─ OnStartup()                     → start API + gRPC listeners
+  ├─ OnShutdown()                    → graceful stop, persist store
+  └─ AddPlugin()                     → register DNS handler in chain
+```
+
+### Source File Map
+
+| File | Responsibility |
+|------|---------------|
+| `setup.go` | Corefile parsing, `pluginConfig` struct, `plugin.Register`, `OnStartup`/`OnShutdown` lifecycle |
+| `store.go` | Thread-safe `Store` with `map[string][]Record`, atomic file I/O, auto-reload goroutine, `SyncPolicy` enforcement |
+| `dynupdate.go` | `DynUpdate` implementing `plugin.Handler`: DNS query serving, CNAME chasing, zone-aware fallthrough, SOA generation |
+| `api.go` | `APIServer`: REST endpoints using Go 1.22+ method routing, auth + metrics middleware |
+| `grpc_server.go` | `GRPCServer`: List/Upsert/Delete RPCs, proto-to-Record conversion with bounds checking |
+| `auth.go` | `Auth`: Bearer token + mTLS CN validation, HTTP middleware, gRPC unary interceptor |
+| `record.go` | `Record` model: per-type validation, `dns.RR` conversion, TXT chunking |
+| `tls_helper.go` | `buildTLSConfig`: server-only or mutual TLS configuration builder |
+| `metrics.go` | Prometheus counters and gauges following CoreDNS conventions |
+| `ready.go` | `Ready()` interface for CoreDNS readiness checks |
+| `doc.go` | Package documentation |
+| `proto/dynupdate.proto` | gRPC service definition (proto3) |
+
+### Key Types
+
+- **Record**: JSON-serializable DNS record model with per-type validation and conversion to `dns.RR` (miekg/dns wire format).
+- **Store**: Thread-safe in-memory map keyed by lowercase FQDN. Methods: `Get`, `GetAll`, `List`, `Upsert`, `Delete`, `DeleteByType`, `DeleteAll`. Uses `sync.RWMutex` for concurrent access.
+- **SyncPolicy**: Enum controlling mutation permissions (`PolicySync`, `PolicyCreateOnly`, `PolicyUpdateOnly`, `PolicyUpsertOnly`). Enforced inside Store mutation methods; violations return `ErrPolicyDenied`.
+- **DynUpdate**: Implements `plugin.Handler`. Serves DNS queries from the Store with CNAME chasing and fallthrough support.
+- **APIServer**: HTTP/1.1 REST server. Routes use Go 1.22+ pattern matching (`GET /api/v1/records/{name}`).
+- **GRPCServer**: gRPC server implementing `dynupdate.v1.DynUpdateService`. Wraps Store operations.
+- **Auth**: Dual-mode authentication. Provides `HTTPMiddleware()` for REST and `UnaryInterceptor()` for gRPC.
+
+### Data Flow
+
+DNS queries: CoreDNS plugin chain → `DynUpdate.ServeDNS()` → `Store.Get()` → DNS answer or fallthrough to next plugin.
+
+REST mutations: HTTP request → `APIServer.handler()` → auth middleware → metrics middleware → handler → `Store.Upsert/Delete` → atomic file persist.
+
+gRPC mutations: gRPC call → auth interceptor → `grpcService` → `Store.Upsert/Delete` → atomic file persist.
+
+Sync policy enforcement occurs inside Store mutation methods. `ErrPolicyDenied` is mapped to HTTP 403 in `api.go` and gRPC `PermissionDenied` in `grpc_server.go`.
+
+## Building the Plugin
+
+Add the plugin to CoreDNS's `plugin.cfg`:
+
+```
+dynupdate:github.com/mauromedda/coredns-updater-plugin
+```
+
+Then build CoreDNS:
+
+```bash
+go generate
+go build
+```
+
+## Development
+
+### Prerequisites
+
+- Go 1.25.6+
+- golangci-lint (for `make lint`)
+- protoc, protoc-gen-go, protoc-gen-go-grpc (for `make proto`)
+- gofmt, goimports (for `make fmt`)
+
+### Make Targets
+
+```
+make help             # Display available targets
+make build            # Compile check (go build ./...)
+make test             # Run all tests with -race
+make test-cover       # Tests with coverage report
+make test-cover-html  # HTML coverage report
+make lint             # golangci-lint run ./...
+make vet              # go vet ./...
+make fmt              # gofmt + goimports
+make check            # Full quality gate: vet + lint + test
+make tidy             # go mod tidy
+make clean            # Remove coverage artifacts, clear test cache
+make proto            # Generate Go code from proto/dynupdate.proto
+make proto-lint       # Lint proto files
+```
+
+Run a single test:
+```bash
+go test -v -race -run TestFunctionName ./...
+```
+
+### Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `github.com/coredns/caddy` | Corefile parsing framework |
+| `github.com/coredns/coredns` | CoreDNS plugin infrastructure |
+| `github.com/miekg/dns` | DNS wire protocol and RR types |
+| `github.com/prometheus/client_golang` | Prometheus metrics |
+| `google.golang.org/grpc` | gRPC framework |
+| `google.golang.org/protobuf` | Protocol Buffers runtime |
+
+### Test Coverage
+
+The test suite covers all components:
+
+- **setup_test.go**: Corefile parsing (valid/invalid configs, auth validation)
+- **store_test.go**: CRUD operations, concurrent access, max records, sync policy enforcement, file persistence, auto-reload
+- **record_test.go**: Per-type validation, name normalization, TTL bounds, CAA tag validation
+- **api_test.go**: HTTP endpoint testing, query filters, JSON encoding, error responses
+- **grpc_server_test.go**: RPC methods, proto message conversion, gRPC error codes
+- **auth_test.go**: Bearer token validation, mTLS CN extraction, fail-closed behavior
+- **dynupdate_test.go**: DNS query handling, CNAME chain following, fallthrough, NXDOMAIN/NODATA
+- **integration_test.go**: End-to-end workflows (DNS + API + gRPC)
+- **tls_helper_test.go**: Server-only and mutual TLS config
+
+### Contributing
+
+The project uses Conventional Commits for commit messages:
+- `feat:` for new features
+- `fix:` for bug fixes
+- `docs:` for documentation changes
+- `refactor:` for code restructuring
+- `test:` for test additions
+- `chore:` for build/tooling changes
+
+All code files include a two-line ABOUTME header comment describing the file's purpose and key dependencies.
+
+Report bugs at https://github.com/mauromedda/coredns-updater-plugin/issues.
+
+## Configuration Examples
+
+### Minimal: REST API with Bearer Token
+
+```corefile
+example.org:53 {
+    dynupdate example.org. {
+        datafile /var/lib/coredns/records.json
+        reload   30s
+
+        api {
+            listen :8080
+            token  super-secret-token-here
+        }
+
+        fallthrough
+    }
+
+    cache 30
+    forward . 8.8.8.8:53
+    errors
+    log
+}
+```
+
+Create a record:
+```bash
+curl -H "Authorization: Bearer super-secret-token-here" \
+     -X POST http://localhost:8080/api/v1/records \
+     -d '{"name":"app.example.org.","type":"A","ttl":300,"value":"10.0.0.1"}'
+```
+
+Query via DNS:
+```bash
+dig @localhost app.example.org A
+```
+
+### Production: mTLS for API and gRPC
+
+```corefile
+example.org:53 {
+    dynupdate example.org. {
+        datafile    /var/lib/coredns/records.json
+        reload      30s
+        max_records 10000
+
+        api {
+            listen     :8443
+            tls        /etc/coredns/tls/server.pem /etc/coredns/tls/server-key.pem /etc/coredns/tls/ca.pem
+            allowed_cn admin-client.example.org
+        }
+
+        grpc {
+            listen     :8444
+            tls        /etc/coredns/tls/server.pem /etc/coredns/tls/server-key.pem /etc/coredns/tls/ca.pem
+            token      grpc-secret-token-change-me
+            allowed_cn grpc-client.example.org automation.example.org
+        }
+
+        fallthrough
+    }
+
+    cache 30
+    forward . 8.8.8.8:53
+    errors
+    log
+    prometheus
+}
+```
+
+Certificate generation:
+```bash
+# 1. Generate a CA
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+  -keyout ca-key.pem -out ca.pem -days 3650 -nodes -subj "/CN=DynUpdate CA"
+
+# 2. Generate server cert signed by the CA
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+  -keyout server-key.pem -out server.csr -nodes -subj "/CN=dns.example.org"
+openssl x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem \
+  -CAcreateserial -out server.pem -days 365 \
+  -extfile <(printf "subjectAltName=DNS:dns.example.org,DNS:localhost")
+
+# 3. Generate client cert signed by the CA
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+  -keyout client-key.pem -out client.csr -nodes -subj "/CN=admin-client.example.org"
+openssl x509 -req -in client.csr -CA ca.pem -CAkey ca-key.pem \
+  -CAcreateserial -out client.pem -days 365
+```
+
+Create a record via mTLS:
+```bash
+curl --cert client.pem --key client-key.pem --cacert ca.pem \
+     -X POST https://dns.example.org:8443/api/v1/records \
+     -H "Content-Type: application/json" \
+     -d '{"name":"app.example.org.","type":"A","ttl":300,"value":"10.0.0.1"}'
+```
+
+List records via gRPC with token:
+```bash
+grpcurl -cacert ca.pem \
+  -H "Authorization: Bearer grpc-secret-token-change-me" \
+  dns.example.org:8444 dynupdate.v1.DynUpdateService/List
+```
+
+List records via gRPC with client cert:
+```bash
+grpcurl -cert client.pem -key client-key.pem -cacert ca.pem \
+  dns.example.org:8444 dynupdate.v1.DynUpdateService/List
+```
+
+### Development: Explicit No-Auth
+
+```corefile
+example.org:53 {
+    dynupdate example.org. {
+        datafile /tmp/records.json
+
+        api {
+            listen :8080
+            no_auth
+        }
+
+        fallthrough
+    }
+
+    forward . 8.8.8.8:53
+    errors
+    log
+}
+```
+
+Warning: `no_auth` disables all authentication. Only use on loopback or in fully trusted networks.
+
+### Restricted Mutations: Upsert-Only for Automated Watchers
+
+```corefile
+ts.example.org:53 {
+    dynupdate ts.example.org. {
+        datafile    /var/lib/coredns/tailscale-records.json
+        reload      30s
+        max_records 1000
+        sync_policy upsert-only
+
+        api {
+            listen :8080
+            token  watcher-token
+        }
+
+        fallthrough
+    }
+
+    cache 30
+    forward . 8.8.8.8:53
+    errors
+    log
+}
+```
+
+Attempts to delete records return HTTP 403 / gRPC `PermissionDenied`.
+
+## Watcher Scripts
+
+Two client-side scripts are provided in the `examples/` directory. They monitor a network interface for IP changes and automatically upsert A or AAAA records via the REST API. Both support standard interfaces (eth0, wlan0) and Tailscale (tailscale0, utun, or CLI auto-detect).
+
+### Python Watcher (dynupdate_watcher.py)
+
+Zero external dependencies (uses only stdlib: urllib, subprocess, ipaddress).
+
+```bash
+python3 dynupdate_watcher.py \
+    --interface tailscale0 \
+    --name myhost.ts.example.org. \
+    --token my-secret
+
+# Or with environment variable:
+DYNUPDATE_TOKEN=my-secret python3 dynupdate_watcher.py \
+    --interface tailscale0 \
+    --name myhost.ts.example.org.
+```
+
+Options:
+- `-i, --interface IFACE`: network interface to monitor (required). Use `tailscale` for CLI auto-detect.
+- `-n, --name FQDN`: DNS record name with trailing dot (required).
+- `-u, --url URL`: dynupdate API URL (default: `http://localhost:8080`).
+- `-t, --token TOKEN`: Bearer token (or set `DYNUPDATE_TOKEN` env var).
+- `-I, --interval SECONDS`: poll interval (default: 30).
+- `-T, --ttl SECONDS`: TTL for DNS records (default: 300).
+- `--ipv6`: monitor IPv6 instead of IPv4 (AAAA record).
+- `-v, --verbose`: enable debug logging.
+
+### Bash Watcher (dynupdate-watcher.sh)
+
+Requires `curl`. POSIX-compatible argument parsing.
+
+```bash
+dynupdate-watcher.sh \
+    -i tailscale0 \
+    -n myhost.ts.example.org. \
+    -u http://localhost:8080 \
+    -t my-secret-token
+```
+
+Options:
+- `-i, --interface IFACE`: network interface to monitor (required). Use `tailscale` for CLI auto-detect.
+- `-n, --name FQDN`: DNS record name with trailing dot (required).
+- `-u, --url URL`: dynupdate API URL (default: `http://localhost:8080`).
+- `-t, --token TOKEN`: Bearer token (or set `DYNUPDATE_TOKEN` env var).
+- `-I, --interval SECONDS`: poll interval (default: 30).
+- `-T, --ttl SECONDS`: TTL for DNS records (default: 300).
+- `-6, --ipv6`: monitor IPv6 instead of IPv4 (AAAA record).
+- `-v, --verbose`: enable debug logging.
+- `-V, --version`: show version.
+- `-h, --help`: show help.
+
+### Tailscale Integration
+
+Tailscale assigns a stable IP (100.x.y.z for IPv4, fd7a:... for IPv6) to each device. By pointing a watcher at the Tailscale interface, you maintain DNS records that always resolve to the device's Tailscale IP.
+
+- Linux: interface is typically `tailscale0`.
+- macOS: interface is a `utunN` device; find it with `tailscale status --json | jq -r '.TailscaleIPs[0]'`.
+- Auto-detect: use `--interface=tailscale` to invoke the `tailscale ip` CLI command.
+
+## Migration from Pre-Auth Versions
+
+Breaking change: any `api` or `grpc` block that has a `listen` directive now requires at least one of `token`, `allowed_cn`, or `no_auth`. Previously, omitting all auth directives silently allowed unauthenticated access.
+
+| Scenario | Action |
+|----------|--------|
+| Already using `token` or `allowed_cn` | No change needed |
+| Intentionally open (dev/trusted) | Add `no_auth` to the block |
+| Accidentally open | Add a `token` directive (recommended) |
+
+## See Also
+
+- CoreDNS plugin development manual: https://coredns.io/manual/plugins-dev/
+- Bug reports: https://github.com/mauromedda/coredns-updater-plugin/issues
