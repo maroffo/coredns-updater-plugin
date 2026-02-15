@@ -116,10 +116,28 @@ func TestAuth_HTTPMiddleware_mTLS_InvalidCN(t *testing.T) {
 	}
 }
 
-func TestAuth_HTTPMiddleware_NoAuthConfigured(t *testing.T) {
+func TestAuth_HTTPMiddleware_NoAuthConfigured_FailsClosed(t *testing.T) {
 	t.Parallel()
-	// Neither token nor mTLS configured: allow all
+	// No token, no CN, no NoAuth flag: must reject (fail-closed)
 	auth := &Auth{}
+
+	handler := auth.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/records", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d (fail-closed)", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAuth_HTTPMiddleware_NoAuth_ExplicitOptOut(t *testing.T) {
+	t.Parallel()
+	// NoAuth explicitly set: allow all
+	auth := &Auth{NoAuth: true}
 
 	handler := auth.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -131,6 +149,42 @@ func TestAuth_HTTPMiddleware_NoAuthConfigured(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestAuth_GRPCInterceptor_NoAuth_FailsClosed(t *testing.T) {
+	t.Parallel()
+	// No token, no CN, no NoAuth: must reject
+	auth := &Auth{}
+
+	ctx := context.Background()
+	_, err := auth.UnaryInterceptor(ctx, nil, nil, func(ctx context.Context, req any) (any, error) {
+		t.Fatal("handler should not be called")
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("expected error (fail-closed)")
+	}
+	if s, ok := status.FromError(err); !ok || s.Code() != codes.Unauthenticated {
+		t.Errorf("code = %v, want Unauthenticated", err)
+	}
+}
+
+func TestAuth_GRPCInterceptor_NoAuth_ExplicitOptOut(t *testing.T) {
+	t.Parallel()
+	auth := &Auth{NoAuth: true}
+
+	ctx := context.Background()
+	called := false
+	_, err := auth.UnaryInterceptor(ctx, nil, nil, func(ctx context.Context, req any) (any, error) {
+		called = true
+		return "ok", nil
+	})
+	if err != nil {
+		t.Fatalf("UnaryInterceptor() error: %v", err)
+	}
+	if !called {
+		t.Error("handler was not called")
 	}
 }
 

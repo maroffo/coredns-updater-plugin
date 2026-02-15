@@ -22,11 +22,12 @@ import (
 type Auth struct {
 	Token     string
 	AllowedCN []string
+	NoAuth    bool
 }
 
-// authRequired returns true when at least one auth mechanism is configured.
+// authRequired returns true unless the operator has explicitly opted out with no_auth.
 func (a *Auth) authRequired() bool {
-	return a.Token != "" || len(a.AllowedCN) > 0
+	return !a.NoAuth
 }
 
 // HTTPMiddleware returns an http.Handler that validates Bearer token or mTLS CN

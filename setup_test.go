@@ -95,6 +95,44 @@ func TestSetup_ValidWithGRPC(t *testing.T) {
 
 		grpc {
 			listen :18443
+			token grpc-secret
+		}
+	}`
+
+	c := caddy.NewTestController("dns", input)
+	err := setup(c)
+	if err != nil {
+		t.Fatalf("setup() error: %v", err)
+	}
+}
+
+func TestSetup_FailsWithoutAuth(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	input := `dynupdate example.org. {
+		datafile ` + dir + `/records.json
+
+		api {
+			listen :18080
+		}
+	}`
+
+	c := caddy.NewTestController("dns", input)
+	err := setup(c)
+	if err == nil {
+		t.Fatal("setup() expected error when api listen set without auth")
+	}
+}
+
+func TestSetup_AllowsNoAuth(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	input := `dynupdate example.org. {
+		datafile ` + dir + `/records.json
+
+		api {
+			listen :18080
+			no_auth
 		}
 	}`
 

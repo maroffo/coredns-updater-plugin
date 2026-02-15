@@ -29,8 +29,12 @@ type pluginConfig struct {
 	grpcTLS    *tlsConfig
 
 	apiAllowedCN  []string
+	apiNoAuth     bool
+
 	grpcAllowedCN []string
-	fallArgs      []string
+	grpcNoAuth    bool
+
+	fallArgs []string
 }
 
 type tlsConfig struct {
@@ -62,14 +66,14 @@ func setup(c *caddy.Controller) error {
 	// Start API server if configured
 	var apiSrv *APIServer
 	if cfg.apiListen != "" {
-		auth := &Auth{Token: cfg.apiToken, AllowedCN: cfg.apiAllowedCN}
+		auth := &Auth{Token: cfg.apiToken, AllowedCN: cfg.apiAllowedCN, NoAuth: cfg.apiNoAuth}
 		apiSrv = NewAPIServer(store, auth, cfg.apiListen, cfg.apiTLS)
 	}
 
 	// Start gRPC server if configured
 	var grpcSrv *GRPCServer
 	if cfg.grpcListen != "" {
-		auth := &Auth{Token: cfg.grpcToken, AllowedCN: cfg.grpcAllowedCN}
+		auth := &Auth{Token: cfg.grpcToken, AllowedCN: cfg.grpcAllowedCN, NoAuth: cfg.grpcNoAuth}
 		grpcSrv = NewGRPCServer(store, auth, cfg.grpcListen, cfg.grpcTLS)
 	}
 
@@ -171,6 +175,13 @@ func parseConfig(c *caddy.Controller) (*pluginConfig, error) {
 		return nil, fmt.Errorf("datafile is required")
 	}
 
+	if cfg.apiListen != "" && cfg.apiToken == "" && len(cfg.apiAllowedCN) == 0 && !cfg.apiNoAuth {
+		return nil, fmt.Errorf("api block requires token, allowed_cn, or explicit no_auth directive")
+	}
+	if cfg.grpcListen != "" && cfg.grpcToken == "" && len(cfg.grpcAllowedCN) == 0 && !cfg.grpcNoAuth {
+		return nil, fmt.Errorf("grpc block requires token, allowed_cn, or explicit no_auth directive")
+	}
+
 	return cfg, nil
 }
 
@@ -224,6 +235,9 @@ func parseAPIDirective(key string, c *caddy.Controller, cfg *pluginConfig) error
 			return fmt.Errorf("allowed_cn requires at least one CN")
 		}
 
+	case "no_auth":
+		cfg.apiNoAuth = true
+
 	default:
 		return fmt.Errorf("unknown api directive %q", key)
 	}
@@ -256,6 +270,9 @@ func parseGRPCDirective(key string, c *caddy.Controller, cfg *pluginConfig) erro
 		if len(cfg.grpcAllowedCN) == 0 {
 			return fmt.Errorf("allowed_cn requires at least one CN")
 		}
+
+	case "no_auth":
+		cfg.grpcNoAuth = true
 
 	default:
 		return fmt.Errorf("unknown grpc directive %q", key)
