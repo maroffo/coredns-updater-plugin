@@ -31,6 +31,10 @@ vendor/
 *~
 .DS_Store
 
+# Python
+__pycache__/
+*.pyc
+
 # Build output
 /build/
 /dist/

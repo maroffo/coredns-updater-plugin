@@ -1,0 +1,38 @@
+# ABOUTME: Example Corefile for using dynupdate with Tailscale devices.
+# ABOUTME: Serves a ts.example.org zone with device records updated by the watcher scripts.
+
+# Tailscale DNS zone: devices register themselves via the watcher script
+# and become reachable as <device>.ts.example.org within the tailnet.
+#
+# Setup:
+#   1. Run CoreDNS with this Corefile on your DNS server.
+#   2. On each device, run the watcher script:
+#        dynupdate-watcher.sh \
+#          -i tailscale0 \
+#          -n macbook.ts.example.org. \
+#          -u http://dns-server:8080 \
+#          -t your-secret-token
+#   3. Query: dig @dns-server macbook.ts.example.org A
+
+ts.example.org:53 {
+    dynupdate ts.example.org. {
+        datafile /var/lib/coredns/tailscale-records.json
+        reload   30s
+
+        api {
+            listen :8080
+            token  your-secret-token-change-me
+        }
+
+        fallthrough
+    }
+
+    # Cache resolved records for 30 seconds
+    cache 30
+
+    # Fall through to upstream for names not in the store
+    forward . 8.8.8.8:53
+
+    errors
+    log
+}
