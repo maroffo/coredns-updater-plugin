@@ -265,6 +265,9 @@ func (s *Store) run() {
 }
 
 func (s *Store) checkReload() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	info, err := os.Stat(s.filePath)
 	if err != nil {
 		return
@@ -278,7 +281,5 @@ func (s *Store) checkReload() {
 		return
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	_ = s.loadFromBytes(raw)
 }

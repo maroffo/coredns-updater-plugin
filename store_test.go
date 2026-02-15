@@ -5,6 +5,7 @@ package dynupdate
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -349,6 +350,46 @@ func TestStore_Get_EmptyStore(t *testing.T) {
 	records := s.Get("nonexistent.example.org.", "A")
 	if len(records) != 0 {
 		t.Errorf("Get() on empty store returned %d records, want 0", len(records))
+	}
+}
+
+func TestStore_CheckReload_NoDataLoss(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "records.json")
+
+	s, err := NewStore(fp, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer s.Stop()
+
+	// Upsert 100 records concurrently while reload is running
+	var wg sync.WaitGroup
+	for i := range 100 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := Record{
+				Name:  fmt.Sprintf("host-%d.example.org.", i),
+				Type:  "A",
+				TTL:   300,
+				Value: fmt.Sprintf("10.0.%d.%d", i/256, i%256),
+			}
+			if uErr := s.Upsert(r); uErr != nil {
+				t.Errorf("Upsert(%d) error: %v", i, uErr)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// Allow a few reload cycles to run
+	time.Sleep(200 * time.Millisecond)
+
+	// All 100 records must still be present
+	all := s.List()
+	if len(all) != 100 {
+		t.Errorf("List() returned %d records after concurrent Upsert+reload, want 100", len(all))
 	}
 }
 
