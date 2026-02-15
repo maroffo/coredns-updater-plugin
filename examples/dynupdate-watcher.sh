@@ -213,7 +213,7 @@ get_ip() {
 # ── DNS Update ───────────────────────────────────────────────────────────────
 update_dns() {
     local -r ip="${1}"
-    local -r payload
+    local payload
     payload=$(printf '{"name":"%s","type":"%s","ttl":%d,"value":"%s"}' \
         "${RECORD_NAME}" "${RECORD_TYPE}" "${TTL}" "${ip}")
 
