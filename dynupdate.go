@@ -47,20 +47,29 @@ func (d *DynUpdate) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 
 	requestCount.WithLabelValues(zone).Inc()
 
+	var rcode int
+	var retErr error
+	defer func() {
+		responseCount.WithLabelValues(zone, dns.RcodeToString[rcode]).Inc()
+	}()
+
 	allRecords := d.Store.GetAll(qname)
 
 	// No records for this name
 	if len(allRecords) == 0 {
 		if d.Fall.Through(qname) {
-			return plugin.NextOrFailure(d.Name(), d.Next, ctx, w, r)
+			rcode, retErr = plugin.NextOrFailure(d.Name(), d.Next, ctx, w, r)
+			return rcode, retErr
 		}
-		return d.writeNXDOMAIN(w, r, zone)
+		rcode, retErr = d.writeNXDOMAIN(w, r, zone)
+		return rcode, retErr
 	}
 
 	// Filter by query type
 	typeRecords := filterByType(allRecords, qtype)
 	if len(typeRecords) > 0 {
-		return d.writeAnswer(w, r, typeRecords)
+		rcode, retErr = d.writeAnswer(w, r, typeRecords)
+		return rcode, retErr
 	}
 
 	// CNAME chasing for A/AAAA queries
@@ -72,13 +81,15 @@ func (d *DynUpdate) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 			rr, err := cnameRecords[0].ToRR()
 			if err == nil {
 				answers := append([]dns.RR{rr}, chain...)
-				return d.writeAnswer(w, r, answers)
+				rcode, retErr = d.writeAnswer(w, r, answers)
+				return rcode, retErr
 			}
 		}
 	}
 
 	// Name exists but no matching type => NODATA
-	return d.writeNODATA(w, r, zone)
+	rcode, retErr = d.writeNODATA(w, r, zone)
+	return rcode, retErr
 }
 
 // chaseCNAME follows CNAME chains within the store, up to maxCNAMEHops depth.

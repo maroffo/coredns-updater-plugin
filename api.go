@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -49,7 +50,27 @@ func (a *APIServer) handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/records/{name}/{type}", a.handleDeleteByType)
 	mux.HandleFunc("DELETE /api/v1/records/{name}", a.handleDeleteAll)
 
-	return a.auth.HTTPMiddleware(mux)
+	return metricsMiddleware(a.auth.HTTPMiddleware(mux))
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the status code.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// metricsMiddleware records API request count by method and status.
+func metricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sr, r)
+		apiRequestCount.WithLabelValues(r.Method, strconv.Itoa(sr.status)).Inc()
+	})
 }
 
 // Start begins serving the REST API in a background goroutine.

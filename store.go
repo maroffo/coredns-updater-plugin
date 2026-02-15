@@ -245,7 +245,22 @@ func (s *Store) persist() error {
 		s.lastMod = info.ModTime()
 	}
 
+	s.updateRecordGaugeLocked()
 	return nil
+}
+
+// updateRecordGaugeLocked sets the storeRecordGauge per record type. Caller must hold at least RLock.
+func (s *Store) updateRecordGaugeLocked() {
+	counts := make(map[string]float64)
+	for _, recs := range s.records {
+		for _, r := range recs {
+			counts[r.Type]++
+		}
+	}
+	storeRecordGauge.Reset()
+	for t, c := range counts {
+		storeRecordGauge.WithLabelValues(t).Set(c)
+	}
 }
 
 // countLocked returns the total number of records. Caller must hold at least RLock.
