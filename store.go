@@ -20,24 +20,40 @@ type storeFile struct {
 
 // Store holds DNS records in memory with optional JSON file backing.
 type Store struct {
-	mu       sync.RWMutex
-	records  map[string][]Record // key: lowercase FQDN
-	filePath string
-	reload   time.Duration
-	lastMod  time.Time
-	stopCh   chan struct{}
-	ready    bool
+	mu         sync.RWMutex
+	records    map[string][]Record // key: lowercase FQDN
+	filePath   string
+	reload     time.Duration
+	lastMod    time.Time
+	stopCh     chan struct{}
+	ready      bool
+	maxRecords int
+}
+
+// StoreOption configures optional Store behaviour.
+type StoreOption func(*Store)
+
+// WithMaxRecords sets the maximum number of records the store will hold.
+// A value of 0 (default) means unlimited.
+func WithMaxRecords(n int) StoreOption {
+	return func(s *Store) {
+		s.maxRecords = n
+	}
 }
 
 // NewStore creates a store backed by the given file path.
 // If the file exists, its records are loaded. If not, an empty file is created.
 // A reload duration of 0 disables auto-reload.
-func NewStore(filePath string, reload time.Duration) (*Store, error) {
+func NewStore(filePath string, reload time.Duration, opts ...StoreOption) (*Store, error) {
 	s := &Store{
 		records:  make(map[string][]Record),
 		filePath: filePath,
 		reload:   reload,
 		stopCh:   make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	if err := s.loadOrCreate(); err != nil {
@@ -123,6 +139,9 @@ func (s *Store) Upsert(r Record) error {
 		}
 	}
 	if !found {
+		if s.maxRecords > 0 && s.countLocked() >= s.maxRecords {
+			return fmt.Errorf("record limit of %d reached", s.maxRecords)
+		}
 		recs = append(recs, r)
 	}
 	s.records[key] = recs
@@ -227,6 +246,15 @@ func (s *Store) persist() error {
 	}
 
 	return nil
+}
+
+// countLocked returns the total number of records. Caller must hold at least RLock.
+func (s *Store) countLocked() int {
+	n := 0
+	for _, recs := range s.records {
+		n += len(recs)
+	}
+	return n
 }
 
 // collectLocked returns all records as a flat slice. Caller must hold at least RLock.

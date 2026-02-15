@@ -5,6 +5,7 @@ package dynupdate
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/coredns/caddy"
@@ -34,7 +35,8 @@ type pluginConfig struct {
 	grpcAllowedCN []string
 	grpcNoAuth    bool
 
-	fallArgs []string
+	maxRecords int
+	fallArgs   []string
 }
 
 type tlsConfig struct {
@@ -49,7 +51,12 @@ func setup(c *caddy.Controller) error {
 		return plugin.Error(pluginName, err)
 	}
 
-	store, err := NewStore(cfg.datafile, cfg.reload)
+	var storeOpts []StoreOption
+	if cfg.maxRecords > 0 {
+		storeOpts = append(storeOpts, WithMaxRecords(cfg.maxRecords))
+	}
+
+	store, err := NewStore(cfg.datafile, cfg.reload, storeOpts...)
 	if err != nil {
 		return plugin.Error(pluginName, fmt.Errorf("creating store: %w", err))
 	}
@@ -162,6 +169,16 @@ func parseConfig(c *caddy.Controller) (*pluginConfig, error) {
 			}); err != nil {
 				return nil, err
 			}
+
+		case "max_records":
+			if !c.NextArg() {
+				return nil, fmt.Errorf("max_records requires a numeric argument")
+			}
+			n, err := strconv.Atoi(c.Val())
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("max_records must be a non-negative integer: %q", c.Val())
+			}
+			cfg.maxRecords = n
 
 		case "fallthrough":
 			cfg.fallArgs = c.RemainingArgs()

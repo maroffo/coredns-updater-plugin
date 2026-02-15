@@ -440,6 +440,74 @@ func TestStore_Delete_NonExistent(t *testing.T) {
 	}
 }
 
+func TestStore_MaxRecords_RejectsNew(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "records.json")
+
+	s, err := NewStore(fp, 0, WithMaxRecords(2))
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer s.Stop()
+
+	_ = s.Upsert(Record{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"})
+	_ = s.Upsert(Record{Name: "b.example.org.", Type: "A", TTL: 300, Value: "10.0.0.2"})
+
+	err = s.Upsert(Record{Name: "c.example.org.", Type: "A", TTL: 300, Value: "10.0.0.3"})
+	if err == nil {
+		t.Fatal("Upsert() expected error when limit reached")
+	}
+}
+
+func TestStore_MaxRecords_UpdatesAllowed(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "records.json")
+
+	s, err := NewStore(fp, 0, WithMaxRecords(2))
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer s.Stop()
+
+	_ = s.Upsert(Record{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"})
+	_ = s.Upsert(Record{Name: "b.example.org.", Type: "A", TTL: 300, Value: "10.0.0.2"})
+
+	// Update existing record (same name+type+value, different TTL) — should succeed
+	err = s.Upsert(Record{Name: "a.example.org.", Type: "A", TTL: 600, Value: "10.0.0.1"})
+	if err != nil {
+		t.Fatalf("Upsert(update) error: %v", err)
+	}
+
+	records := s.Get("a.example.org.", "A")
+	if len(records) != 1 || records[0].TTL != 600 {
+		t.Errorf("update failed: got %v", records)
+	}
+}
+
+func TestStore_MaxRecords_ZeroUnlimited(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "records.json")
+
+	s, err := NewStore(fp, 0, WithMaxRecords(0))
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer s.Stop()
+
+	for i := range 100 {
+		err := s.Upsert(Record{Name: fmt.Sprintf("host-%d.example.org.", i), Type: "A", TTL: 300, Value: fmt.Sprintf("10.0.%d.%d", i/256, i%256)})
+		if err != nil {
+			t.Fatalf("Upsert(%d) error: %v", i, err)
+		}
+	}
+	if len(s.List()) != 100 {
+		t.Errorf("List() = %d, want 100", len(s.List()))
+	}
+}
+
 func TestStore_LoadFromTestdata(t *testing.T) {
 	t.Parallel()
 
