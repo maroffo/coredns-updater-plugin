@@ -45,6 +45,8 @@ func (d *DynUpdate) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 		return plugin.NextOrFailure(d.Name(), d.Next, ctx, w, r)
 	}
 
+	requestCount.WithLabelValues(zone).Inc()
+
 	allRecords := d.Store.GetAll(qname)
 
 	// No records for this name
