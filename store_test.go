@@ -695,6 +695,136 @@ func TestStore_Upsert_SyncPolicy(t *testing.T) {
 	}
 }
 
+func TestStore_Delete_SyncPolicy(t *testing.T) {
+	t.Parallel()
+
+	policies := []struct {
+		name    string
+		policy  SyncPolicy
+		wantErr bool
+	}{
+		{"PolicySync allows delete", PolicySync, false},
+		{"PolicyCreateOnly denies delete", PolicyCreateOnly, true},
+		{"PolicyUpdateOnly denies delete", PolicyUpdateOnly, true},
+		{"PolicyUpsertOnly denies delete", PolicyUpsertOnly, true},
+	}
+
+	for _, pp := range policies {
+		t.Run(pp.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			fp := filepath.Join(dir, "records.json")
+
+			s, err := NewStore(fp, 0, WithSyncPolicy(pp.policy))
+			if err != nil {
+				t.Fatalf("NewStore() error: %v", err)
+			}
+			defer s.Stop()
+
+			// Seed a record directly
+			s.mu.Lock()
+			s.records["a.example.org."] = []Record{
+				{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+			}
+			s.mu.Unlock()
+
+			err = s.Delete("a.example.org.", "A", "10.0.0.1")
+			if (err != nil) != pp.wantErr {
+				t.Errorf("Delete() error = %v, wantErr %v", err, pp.wantErr)
+			}
+			if pp.wantErr && !errors.Is(err, ErrPolicyDenied) {
+				t.Errorf("Delete() error = %v, want errors.Is ErrPolicyDenied", err)
+			}
+		})
+	}
+}
+
+func TestStore_DeleteByType_SyncPolicy(t *testing.T) {
+	t.Parallel()
+
+	policies := []struct {
+		name    string
+		policy  SyncPolicy
+		wantErr bool
+	}{
+		{"PolicySync allows delete by type", PolicySync, false},
+		{"PolicyCreateOnly denies delete by type", PolicyCreateOnly, true},
+		{"PolicyUpdateOnly denies delete by type", PolicyUpdateOnly, true},
+		{"PolicyUpsertOnly denies delete by type", PolicyUpsertOnly, true},
+	}
+
+	for _, pp := range policies {
+		t.Run(pp.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			fp := filepath.Join(dir, "records.json")
+
+			s, err := NewStore(fp, 0, WithSyncPolicy(pp.policy))
+			if err != nil {
+				t.Fatalf("NewStore() error: %v", err)
+			}
+			defer s.Stop()
+
+			s.mu.Lock()
+			s.records["a.example.org."] = []Record{
+				{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+			}
+			s.mu.Unlock()
+
+			err = s.DeleteByType("a.example.org.", "A")
+			if (err != nil) != pp.wantErr {
+				t.Errorf("DeleteByType() error = %v, wantErr %v", err, pp.wantErr)
+			}
+			if pp.wantErr && !errors.Is(err, ErrPolicyDenied) {
+				t.Errorf("DeleteByType() error = %v, want errors.Is ErrPolicyDenied", err)
+			}
+		})
+	}
+}
+
+func TestStore_DeleteAll_SyncPolicy(t *testing.T) {
+	t.Parallel()
+
+	policies := []struct {
+		name    string
+		policy  SyncPolicy
+		wantErr bool
+	}{
+		{"PolicySync allows delete all", PolicySync, false},
+		{"PolicyCreateOnly denies delete all", PolicyCreateOnly, true},
+		{"PolicyUpdateOnly denies delete all", PolicyUpdateOnly, true},
+		{"PolicyUpsertOnly denies delete all", PolicyUpsertOnly, true},
+	}
+
+	for _, pp := range policies {
+		t.Run(pp.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			fp := filepath.Join(dir, "records.json")
+
+			s, err := NewStore(fp, 0, WithSyncPolicy(pp.policy))
+			if err != nil {
+				t.Fatalf("NewStore() error: %v", err)
+			}
+			defer s.Stop()
+
+			s.mu.Lock()
+			s.records["a.example.org."] = []Record{
+				{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+			}
+			s.mu.Unlock()
+
+			err = s.DeleteAll("a.example.org.")
+			if (err != nil) != pp.wantErr {
+				t.Errorf("DeleteAll() error = %v, wantErr %v", err, pp.wantErr)
+			}
+			if pp.wantErr && !errors.Is(err, ErrPolicyDenied) {
+				t.Errorf("DeleteAll() error = %v, want errors.Is ErrPolicyDenied", err)
+			}
+		})
+	}
+}
+
 func TestStore_LoadFromTestdata(t *testing.T) {
 	t.Parallel()
 

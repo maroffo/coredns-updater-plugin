@@ -220,6 +220,10 @@ func (s *Store) Delete(name, qtype, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.syncPolicy != PolicySync {
+		return fmt.Errorf("delete denied: %w", ErrPolicyDenied)
+	}
+
 	key := strings.ToLower(name)
 	recs := s.records[key]
 	filtered := recs[:0]
@@ -245,6 +249,10 @@ func (s *Store) DeleteByType(name, qtype string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.syncPolicy != PolicySync {
+		return fmt.Errorf("delete denied: %w", ErrPolicyDenied)
+	}
+
 	key := strings.ToLower(name)
 	recs := s.records[key]
 	filtered := make([]Record, 0, len(recs))
@@ -267,6 +275,10 @@ func (s *Store) DeleteByType(name, qtype string) error {
 func (s *Store) DeleteAll(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.syncPolicy != PolicySync {
+		return fmt.Errorf("delete denied: %w", ErrPolicyDenied)
+	}
 
 	key := strings.ToLower(name)
 	delete(s.records, key)
