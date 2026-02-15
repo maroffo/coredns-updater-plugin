@@ -6,6 +6,7 @@ package dynupdate
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 
 	pb "github.com/mauromedda/coredns-updater-plugin/proto"
@@ -96,7 +97,10 @@ func (s *grpcService) Upsert(_ context.Context, req *pb.UpsertRequest) (*pb.Upse
 		return nil, status.Error(codes.InvalidArgument, "record is required")
 	}
 
-	rec := protoToRecord(req.Record)
+	rec, err := protoToRecord(req.Record)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid field value: %v", err)
+	}
 	if err := rec.Validate(); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "validation failed: %v", err)
 	}
@@ -140,7 +144,19 @@ func recordToProto(r Record) *pb.Record {
 	}
 }
 
-func protoToRecord(p *pb.Record) Record {
+func protoToRecord(p *pb.Record) (Record, error) {
+	if p.Priority > math.MaxUint16 {
+		return Record{}, fmt.Errorf("priority %d exceeds max %d", p.Priority, math.MaxUint16)
+	}
+	if p.Weight > math.MaxUint16 {
+		return Record{}, fmt.Errorf("weight %d exceeds max %d", p.Weight, math.MaxUint16)
+	}
+	if p.Port > math.MaxUint16 {
+		return Record{}, fmt.Errorf("port %d exceeds max %d", p.Port, math.MaxUint16)
+	}
+	if p.Flag > math.MaxUint8 {
+		return Record{}, fmt.Errorf("flag %d exceeds max %d", p.Flag, math.MaxUint8)
+	}
 	return Record{
 		Name:     p.Name,
 		Type:     p.Type,
@@ -151,5 +167,5 @@ func protoToRecord(p *pb.Record) Record {
 		Port:     uint16(p.Port),
 		Flag:     uint8(p.Flag),
 		Tag:      p.Tag,
-	}
+	}, nil
 }

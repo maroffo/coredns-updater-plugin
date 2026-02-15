@@ -156,6 +156,59 @@ func TestGRPC_Unauthenticated(t *testing.T) {
 	}
 }
 
+func TestGRPC_Upsert_OverflowValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		record *pb.Record
+	}{
+		{
+			name: "priority overflow",
+			record: &pb.Record{
+				Name: "_sip._tcp.example.org.", Type: "SRV", Ttl: 300,
+				Value: "sip.example.org.", Priority: 65537, Weight: 10, Port: 5060,
+			},
+		},
+		{
+			name: "weight overflow",
+			record: &pb.Record{
+				Name: "_sip._tcp.example.org.", Type: "SRV", Ttl: 300,
+				Value: "sip.example.org.", Priority: 10, Weight: 65537, Port: 5060,
+			},
+		},
+		{
+			name: "port overflow",
+			record: &pb.Record{
+				Name: "_sip._tcp.example.org.", Type: "SRV", Ttl: 300,
+				Value: "sip.example.org.", Priority: 10, Weight: 10, Port: 65537,
+			},
+		},
+		{
+			name: "flag overflow",
+			record: &pb.Record{
+				Name: "example.org.", Type: "CAA", Ttl: 300,
+				Value: "letsencrypt.org", Tag: "issue", Flag: 256,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client, _ := newTestGRPCClient(t, "grpc-secret")
+			_, err := client.Upsert(authCtx("grpc-secret"), &pb.UpsertRequest{Record: tt.record})
+			if err == nil {
+				t.Fatal("expected error for overflow value")
+			}
+			s, ok := status.FromError(err)
+			if !ok || s.Code() != codes.InvalidArgument {
+				t.Errorf("code = %v, want InvalidArgument", err)
+			}
+		})
+	}
+}
+
 func TestGRPC_Upsert_ValidationError(t *testing.T) {
 	t.Parallel()
 	client, _ := newTestGRPCClient(t, "grpc-secret")
