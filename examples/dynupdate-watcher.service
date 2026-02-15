@@ -1,0 +1,47 @@
+# ABOUTME: Systemd unit file for the dynupdate-watcher.sh network interface monitor.
+# ABOUTME: Watches a Tailscale (or other) interface and upserts A/AAAA records to dynupdate.
+#
+# Installation:
+#   1. Copy the script:
+#        cp dynupdate-watcher.sh /usr/local/bin/
+#        chmod +x /usr/local/bin/dynupdate-watcher.sh
+#
+#   2. Create the environment file with your token:
+#        echo 'DYNUPDATE_TOKEN=super-secret-token-here' > /etc/default/dynupdate-watcher
+#        chmod 600 /etc/default/dynupdate-watcher
+#
+#   3. Copy and customise this unit file:
+#        cp dynupdate-watcher.service /etc/systemd/system/
+#        systemctl daemon-reload
+#
+#   4. Edit the ExecStart arguments to match your setup, then:
+#        systemctl enable --now dynupdate-watcher
+
+[Unit]
+Description=dynupdate DNS watcher for Tailscale interface
+Documentation=https://github.com/mauromedda/coredns-updater-plugin
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/dynupdate-watcher
+ExecStart=/usr/local/bin/dynupdate-watcher.sh \
+    -i tailscale0 \
+    -n %H.prjxai.xyz. \
+    -u http://spark.prjxai.xyz:9090 \
+    -I 15
+Restart=on-failure
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
