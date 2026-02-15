@@ -13,6 +13,53 @@ import (
 	"time"
 )
 
+// SyncPolicy controls which mutation operations the store permits.
+type SyncPolicy uint8
+
+const (
+	// PolicySync allows full CRUD operations (default zero-value).
+	PolicySync SyncPolicy = iota
+	// PolicyCreateOnly allows only creating new records.
+	PolicyCreateOnly
+	// PolicyUpdateOnly allows only updating existing records.
+	PolicyUpdateOnly
+	// PolicyUpsertOnly allows creating and updating, but not deleting.
+	PolicyUpsertOnly
+)
+
+// ParseSyncPolicy parses a string into a SyncPolicy.
+// Valid values: "sync", "crud", "create-only", "update-only", "upsert-only".
+func ParseSyncPolicy(s string) (SyncPolicy, error) {
+	switch strings.ToLower(s) {
+	case "sync", "crud":
+		return PolicySync, nil
+	case "create-only":
+		return PolicyCreateOnly, nil
+	case "update-only":
+		return PolicyUpdateOnly, nil
+	case "upsert-only":
+		return PolicyUpsertOnly, nil
+	default:
+		return 0, fmt.Errorf("unknown sync policy %q: valid values are sync, crud, create-only, update-only, upsert-only", s)
+	}
+}
+
+// String returns the canonical string representation of the policy.
+func (p SyncPolicy) String() string {
+	switch p {
+	case PolicySync:
+		return "sync"
+	case PolicyCreateOnly:
+		return "create-only"
+	case PolicyUpdateOnly:
+		return "update-only"
+	case PolicyUpsertOnly:
+		return "upsert-only"
+	default:
+		return fmt.Sprintf("SyncPolicy(%d)", p)
+	}
+}
+
 // storeFile is the JSON envelope for persisted records.
 type storeFile struct {
 	Records []Record `json:"records"`

@@ -508,6 +508,64 @@ func TestStore_MaxRecords_ZeroUnlimited(t *testing.T) {
 	}
 }
 
+func TestParseSyncPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    SyncPolicy
+		wantErr bool
+	}{
+		{name: "sync", input: "sync", want: PolicySync},
+		{name: "crud alias", input: "crud", want: PolicySync},
+		{name: "create-only", input: "create-only", want: PolicyCreateOnly},
+		{name: "update-only", input: "update-only", want: PolicyUpdateOnly},
+		{name: "upsert-only", input: "upsert-only", want: PolicyUpsertOnly},
+		{name: "case insensitive", input: "CREATE-ONLY", want: PolicyCreateOnly},
+		{name: "mixed case", input: "Upsert-Only", want: PolicyUpsertOnly},
+		{name: "invalid value", input: "delete-only", wantErr: true},
+		{name: "empty string", input: "", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ParseSyncPolicy(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseSyncPolicy(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("ParseSyncPolicy(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSyncPolicy_String(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		policy SyncPolicy
+		want   string
+	}{
+		{PolicySync, "sync"},
+		{PolicyCreateOnly, "create-only"},
+		{PolicyUpdateOnly, "update-only"},
+		{PolicyUpsertOnly, "upsert-only"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.policy.String(); got != tt.want {
+				t.Errorf("SyncPolicy.String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestStore_LoadFromTestdata(t *testing.T) {
 	t.Parallel()
 
