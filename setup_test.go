@@ -105,6 +105,39 @@ func TestSetup_ValidWithGRPC(t *testing.T) {
 	}
 }
 
+func TestSetup_SeparateAllowedCN(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	input := `dynupdate example.org. {
+		datafile ` + dir + `/records.json
+
+		api {
+			listen :18080
+			token api-secret
+			allowed_cn api-client.example.org
+		}
+
+		grpc {
+			listen :18443
+			token grpc-secret
+			allowed_cn grpc-client.example.org
+		}
+	}`
+
+	c := caddy.NewTestController("dns", input)
+	cfg, err := parseConfig(c)
+	if err != nil {
+		t.Fatalf("parseConfig() error: %v", err)
+	}
+
+	if len(cfg.apiAllowedCN) != 1 || cfg.apiAllowedCN[0] != "api-client.example.org" {
+		t.Errorf("apiAllowedCN = %v, want [api-client.example.org]", cfg.apiAllowedCN)
+	}
+	if len(cfg.grpcAllowedCN) != 1 || cfg.grpcAllowedCN[0] != "grpc-client.example.org" {
+		t.Errorf("grpcAllowedCN = %v, want [grpc-client.example.org]", cfg.grpcAllowedCN)
+	}
+}
+
 func TestSetup_FallthroughWithZones(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

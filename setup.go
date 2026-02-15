@@ -28,8 +28,9 @@ type pluginConfig struct {
 	grpcToken  string
 	grpcTLS    *tlsConfig
 
-	allowedCN []string
-	fallArgs  []string
+	apiAllowedCN  []string
+	grpcAllowedCN []string
+	fallArgs      []string
 }
 
 type tlsConfig struct {
@@ -61,14 +62,14 @@ func setup(c *caddy.Controller) error {
 	// Start API server if configured
 	var apiSrv *APIServer
 	if cfg.apiListen != "" {
-		auth := &Auth{Token: cfg.apiToken, AllowedCN: cfg.allowedCN}
+		auth := &Auth{Token: cfg.apiToken, AllowedCN: cfg.apiAllowedCN}
 		apiSrv = NewAPIServer(store, auth, cfg.apiListen, cfg.apiTLS)
 	}
 
 	// Start gRPC server if configured
 	var grpcSrv *GRPCServer
 	if cfg.grpcListen != "" {
-		auth := &Auth{Token: cfg.grpcToken, AllowedCN: cfg.allowedCN}
+		auth := &Auth{Token: cfg.grpcToken, AllowedCN: cfg.grpcAllowedCN}
 		grpcSrv = NewGRPCServer(store, auth, cfg.grpcListen, cfg.grpcTLS)
 	}
 
@@ -218,8 +219,8 @@ func parseAPIDirective(key string, c *caddy.Controller, cfg *pluginConfig) error
 		cfg.apiTLS = &tlsConfig{cert: args[0], key: args[1], ca: args[2]}
 
 	case "allowed_cn":
-		cfg.allowedCN = c.RemainingArgs()
-		if len(cfg.allowedCN) == 0 {
+		cfg.apiAllowedCN = c.RemainingArgs()
+		if len(cfg.apiAllowedCN) == 0 {
 			return fmt.Errorf("allowed_cn requires at least one CN")
 		}
 
@@ -251,8 +252,8 @@ func parseGRPCDirective(key string, c *caddy.Controller, cfg *pluginConfig) erro
 		cfg.grpcTLS = &tlsConfig{cert: args[0], key: args[1], ca: args[2]}
 
 	case "allowed_cn":
-		cfg.allowedCN = c.RemainingArgs()
-		if len(cfg.allowedCN) == 0 {
+		cfg.grpcAllowedCN = c.RemainingArgs()
+		if len(cfg.grpcAllowedCN) == 0 {
 			return fmt.Errorf("allowed_cn requires at least one CN")
 		}
 
