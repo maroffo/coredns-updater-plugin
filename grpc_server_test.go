@@ -20,12 +20,12 @@ import (
 
 const bufSize = 1024 * 1024
 
-func newTestGRPCClient(t *testing.T, token string) (pb.DynUpdateServiceClient, *Store) {
+func newTestGRPCClient(t *testing.T, token string, opts ...StoreOption) (pb.DynUpdateServiceClient, *Store) {
 	t.Helper()
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "records.json")
 
-	store, err := NewStore(fp, 0)
+	store, err := NewStore(fp, 0, opts...)
 	if err != nil {
 		t.Fatalf("NewStore() error: %v", err)
 	}
@@ -227,5 +227,52 @@ func TestGRPC_Upsert_ValidationError(t *testing.T) {
 	s, ok := status.FromError(err)
 	if !ok || s.Code() != codes.InvalidArgument {
 		t.Errorf("code = %v, want InvalidArgument", err)
+	}
+}
+
+func TestGRPC_Upsert_PolicyUpdateOnly_ReturnsPermissionDenied(t *testing.T) {
+	t.Parallel()
+	client, _ := newTestGRPCClient(t, "grpc-secret", WithSyncPolicy(PolicyUpdateOnly))
+	ctx := authCtx("grpc-secret")
+
+	_, err := client.Upsert(ctx, &pb.UpsertRequest{
+		Record: &pb.Record{
+			Name:  "a.example.org.",
+			Type:  "A",
+			Ttl:   300,
+			Value: "10.0.0.1",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for policy-denied create")
+	}
+	s, ok := status.FromError(err)
+	if !ok || s.Code() != codes.PermissionDenied {
+		t.Errorf("code = %v, want PermissionDenied", s.Code())
+	}
+}
+
+func TestGRPC_Delete_PolicyUpsertOnly_ReturnsPermissionDenied(t *testing.T) {
+	t.Parallel()
+	client, store := newTestGRPCClient(t, "grpc-secret", WithSyncPolicy(PolicyUpsertOnly))
+	// Seed a record directly
+	store.mu.Lock()
+	store.records["a.example.org."] = []Record{
+		{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+	}
+	store.mu.Unlock()
+
+	ctx := authCtx("grpc-secret")
+	_, err := client.Delete(ctx, &pb.DeleteRequest{
+		Name:  "a.example.org.",
+		Type:  "A",
+		Value: "10.0.0.1",
+	})
+	if err == nil {
+		t.Fatal("expected error for policy-denied delete")
+	}
+	s, ok := status.FromError(err)
+	if !ok || s.Code() != codes.PermissionDenied {
+		t.Errorf("code = %v, want PermissionDenied", s.Code())
 	}
 }

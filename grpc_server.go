@@ -5,6 +5,7 @@ package dynupdate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -106,6 +107,9 @@ func (s *grpcService) Upsert(_ context.Context, req *pb.UpsertRequest) (*pb.Upse
 	}
 
 	if err := s.store.Upsert(rec); err != nil {
+		if errors.Is(err, ErrPolicyDenied) {
+			return nil, status.Errorf(codes.PermissionDenied, "upsert denied: %v", err)
+		}
 		return nil, status.Errorf(codes.Internal, "upsert failed: %v", err)
 	}
 
@@ -119,10 +123,16 @@ func (s *grpcService) Delete(_ context.Context, req *pb.DeleteRequest) (*pb.Dele
 
 	if req.Type == "" && req.Value == "" {
 		if err := s.store.DeleteAll(req.Name); err != nil {
+			if errors.Is(err, ErrPolicyDenied) {
+				return nil, status.Errorf(codes.PermissionDenied, "delete denied: %v", err)
+			}
 			return nil, status.Errorf(codes.Internal, "delete failed: %v", err)
 		}
 	} else {
 		if err := s.store.Delete(req.Name, req.Type, req.Value); err != nil {
+			if errors.Is(err, ErrPolicyDenied) {
+				return nil, status.Errorf(codes.PermissionDenied, "delete denied: %v", err)
+			}
 			return nil, status.Errorf(codes.Internal, "delete failed: %v", err)
 		}
 	}
