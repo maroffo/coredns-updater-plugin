@@ -320,6 +320,41 @@ Or, if unauthenticated access is intentional:
  }
 ```
 
+## Running as a systemd Service
+
+A systemd unit file is provided in `examples/dynupdate-watcher.service` for running the bash watcher as a managed service on Linux.
+
+### Installation
+
+```bash
+# 1. Install the script
+cp examples/dynupdate-watcher.sh /usr/local/bin/
+chmod +x /usr/local/bin/dynupdate-watcher.sh
+
+# 2. Create the environment file with your token
+echo 'DYNUPDATE_TOKEN=super-secret-token-here' > /etc/default/dynupdate-watcher
+chmod 600 /etc/default/dynupdate-watcher
+
+# 3. Install and customise the unit file
+cp examples/dynupdate-watcher.service /etc/systemd/system/
+# Edit ExecStart arguments to match your setup:
+#   systemctl edit dynupdate-watcher
+systemctl daemon-reload
+
+# 4. Enable and start
+systemctl enable --now dynupdate-watcher
+```
+
+### Management
+
+```bash
+systemctl status dynupdate-watcher    # check status
+journalctl -u dynupdate-watcher -f    # follow logs
+systemctl restart dynupdate-watcher   # restart after config change
+```
+
+The unit file includes security hardening (read-only filesystem, no privilege escalation, private /tmp) and starts after `network-online.target` and `tailscaled.service`. The `%H` specifier in `ExecStart` expands to the machine hostname automatically.
+
 ## See Also
 
 The CoreDNS manual: https://coredns.io/manual/plugins-dev/

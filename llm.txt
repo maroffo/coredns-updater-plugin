@@ -640,6 +640,77 @@ Tailscale assigns a stable IP (100.x.y.z for IPv4, fd7a:... for IPv6) to each de
 - macOS: interface is a `utunN` device; find it with `tailscale status --json | jq -r '.TailscaleIPs[0]'`.
 - Auto-detect: use `--interface=tailscale` to invoke the `tailscale ip` CLI command.
 
+### Running as a systemd Service
+
+A systemd unit file (`examples/dynupdate-watcher.service`) is provided for running the bash watcher as a managed service on Linux.
+
+Installation:
+
+```bash
+# 1. Install the script
+cp examples/dynupdate-watcher.sh /usr/local/bin/
+chmod +x /usr/local/bin/dynupdate-watcher.sh
+
+# 2. Create the environment file with your token (keeps secrets out of process listings)
+echo 'DYNUPDATE_TOKEN=super-secret-token-here' > /etc/default/dynupdate-watcher
+chmod 600 /etc/default/dynupdate-watcher
+
+# 3. Install and customise the unit file
+cp examples/dynupdate-watcher.service /etc/systemd/system/
+# Edit ExecStart arguments to match your setup
+systemctl daemon-reload
+
+# 4. Enable and start
+systemctl enable --now dynupdate-watcher
+```
+
+Management:
+
+```bash
+systemctl status dynupdate-watcher    # check status
+journalctl -u dynupdate-watcher -f    # follow logs
+systemctl restart dynupdate-watcher   # restart after config change
+```
+
+Unit file features:
+- **Token via environment file** (`/etc/default/dynupdate-watcher`): avoids exposing the secret in process listings.
+- **`%H` specifier**: expands to the machine hostname in the `-n` argument, so each host registers itself automatically.
+- **Ordering**: starts after `network-online.target` and `tailscaled.service` so the interface is ready.
+- **Restart on failure**: automatic restart with 10s backoff.
+- **Security hardening**: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `ProtectKernelTunables`, `ProtectControlGroups`, `RestrictSUIDSGID`.
+
+Unit file contents:
+
+```ini
+[Unit]
+Description=dynupdate DNS watcher for Tailscale interface
+Documentation=https://github.com/mauromedda/coredns-updater-plugin
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/dynupdate-watcher
+ExecStart=/usr/local/bin/dynupdate-watcher.sh \
+    -i tailscale0 \
+    -n %H.prjxai.xyz. \
+    -u http://spark.prjxai.xyz:9090 \
+    -I 15
+Restart=on-failure
+RestartSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
 ## Migration from Pre-Auth Versions
 
 Breaking change: any `api` or `grpc` block that has a `listen` directive now requires at least one of `token`, `allowed_cn`, or `no_auth`. Previously, omitting all auth directives silently allowed unauthenticated access.
