@@ -51,6 +51,12 @@ func (r *Record) Validate() error {
 	if !strings.HasSuffix(r.Name, ".") {
 		return fmt.Errorf("name %q must end with a trailing dot", r.Name)
 	}
+	if strings.Contains(r.Name, "..") {
+		return fmt.Errorf("name %q is invalid: consecutive dots", r.Name)
+	}
+	if _, ok := dns.IsDomainName(r.Name); !ok {
+		return fmt.Errorf("name %q is invalid: label or total length exceeded", r.Name)
+	}
 
 	r.Type = strings.ToUpper(r.Type)
 	if r.Type == "" {

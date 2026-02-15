@@ -100,6 +100,21 @@ func TestRecord_Validate_InvalidRecords(t *testing.T) {
 			wantErr: "trailing dot",
 		},
 		{
+			name:    "name with consecutive dots",
+			record:  Record{Name: "app..example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+			wantErr: "invalid",
+		},
+		{
+			name:    "label exceeds 63 chars",
+			record:  Record{Name: strings.Repeat("a", 64) + ".example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+			wantErr: "invalid",
+		},
+		{
+			name:    "total name exceeds 253 chars",
+			record:  Record{Name: strings.Repeat("a.", 127) + ".", Type: "A", TTL: 300, Value: "10.0.0.1"},
+			wantErr: "invalid",
+		},
+		{
 			name:    "empty type",
 			record:  Record{Name: "app.example.org.", Type: "", TTL: 300, Value: "10.0.0.1"},
 			wantErr: "type",
