@@ -7,6 +7,9 @@
 # Auth requirement: the api block MUST have a token, allowed_cn, or no_auth.
 # Without one, CoreDNS will refuse to start (fail-closed authentication).
 #
+# Sync policy: upsert-only allows the watcher to create and update device
+# records, but prevents accidental deletes. Delete attempts return HTTP 403.
+#
 # Setup:
 #   1. Run CoreDNS with this Corefile on your DNS server.
 #   2. On each device, run the watcher script:
@@ -22,6 +25,7 @@ ts.example.org:53 {
         datafile    /var/lib/coredns/tailscale-records.json
         reload      30s
         max_records 1000
+        sync_policy upsert-only
 
         api {
             listen :8080

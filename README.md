@@ -19,6 +19,7 @@ dynupdate [ZONES...] {
     datafile    PATH
     reload      DURATION
     max_records N
+    sync_policy MODE
 
     api {
         listen     ADDR
@@ -44,6 +45,13 @@ dynupdate [ZONES...] {
 - `datafile` **PATH** - (required) path to the JSON file for record persistence.
 - `reload` **DURATION** - interval for checking external file modifications (e.g., `30s`). Disabled if omitted.
 - `max_records` **N** - maximum number of records the store will hold. New inserts beyond this limit are rejected; updates to existing records are always allowed. A value of `0` (default) means unlimited.
+- `sync_policy` **MODE** - controls which mutation operations are permitted. Valid modes:
+  - `sync` (default, alias: `crud`) - full create, update, and delete authority.
+  - `create-only` - only new records can be created; updates and deletes are denied.
+  - `update-only` - only existing records can be updated; creates and deletes are denied.
+  - `upsert-only` - records can be created and updated; deletes are denied.
+
+  Policy violations return HTTP 403 (REST) or `PermissionDenied` (gRPC).
 - `api` - configure the REST API server. When `listen` is set, at least one of `token`, `allowed_cn`, or `no_auth` is **required**.
   - `listen` **ADDR** - address to bind (e.g., `:8080`).
   - `token` **SECRET** - Bearer token for authentication.
@@ -204,6 +212,35 @@ example.org:53 {
 ```
 
 > **Warning**: `no_auth` disables all authentication. Only use on loopback or in fully trusted networks.
+
+### Restricted Mutations: Upsert-Only for Tailscale Watcher
+
+Restrict agents to creating and updating records while preventing deletes; ideal for automated watchers:
+
+```corefile
+ts.example.org:53 {
+    dynupdate ts.example.org. {
+        datafile    /var/lib/coredns/tailscale-records.json
+        reload      30s
+        max_records 1000
+        sync_policy upsert-only
+
+        api {
+            listen :8080
+            token  watcher-token
+        }
+
+        fallthrough
+    }
+
+    cache 30
+    forward . 8.8.8.8:53
+    errors
+    log
+}
+```
+
+Attempts to delete records return HTTP 403 / gRPC `PermissionDenied`.
 
 ## REST API
 
