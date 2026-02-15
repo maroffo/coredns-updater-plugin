@@ -5,9 +5,11 @@ package dynupdate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -595,6 +597,101 @@ func TestStore_DefaultSyncPolicy(t *testing.T) {
 
 	if s.syncPolicy != PolicySync {
 		t.Errorf("default syncPolicy = %v, want %v", s.syncPolicy, PolicySync)
+	}
+}
+
+func TestStore_Upsert_SyncPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		policy    SyncPolicy
+		setup     []Record // records to seed before the test upsert
+		upsert    Record   // the record to upsert
+		wantErr   bool
+		errTarget error
+	}{
+		{
+			name:   "PolicyCreateOnly allows create",
+			policy: PolicyCreateOnly,
+			upsert: Record{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+		},
+		{
+			name:      "PolicyCreateOnly rejects update",
+			policy:    PolicyCreateOnly,
+			setup:     []Record{{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"}},
+			upsert:    Record{Name: "a.example.org.", Type: "A", TTL: 600, Value: "10.0.0.1"},
+			wantErr:   true,
+			errTarget: ErrPolicyDenied,
+		},
+		{
+			name:   "PolicyUpdateOnly allows update",
+			policy: PolicyUpdateOnly,
+			setup:  []Record{{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"}},
+			upsert: Record{Name: "a.example.org.", Type: "A", TTL: 600, Value: "10.0.0.1"},
+		},
+		{
+			name:      "PolicyUpdateOnly rejects create",
+			policy:    PolicyUpdateOnly,
+			upsert:    Record{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+			wantErr:   true,
+			errTarget: ErrPolicyDenied,
+		},
+		{
+			name:   "PolicyUpsertOnly allows create",
+			policy: PolicyUpsertOnly,
+			upsert: Record{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+		},
+		{
+			name:   "PolicyUpsertOnly allows update",
+			policy: PolicyUpsertOnly,
+			setup:  []Record{{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"}},
+			upsert: Record{Name: "a.example.org.", Type: "A", TTL: 600, Value: "10.0.0.1"},
+		},
+		{
+			name:   "PolicySync allows create",
+			policy: PolicySync,
+			upsert: Record{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+		},
+		{
+			name:   "PolicySync allows update",
+			policy: PolicySync,
+			setup:  []Record{{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"}},
+			upsert: Record{Name: "a.example.org.", Type: "A", TTL: 600, Value: "10.0.0.1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			fp := filepath.Join(dir, "records.json")
+
+			s, err := NewStore(fp, 0, WithSyncPolicy(tt.policy))
+			if err != nil {
+				t.Fatalf("NewStore() error: %v", err)
+			}
+			defer s.Stop()
+
+			for _, r := range tt.setup {
+				// Seed with PolicySync to bypass policy for setup
+				s.mu.Lock()
+				key := strings.ToLower(r.Name)
+				s.records[key] = append(s.records[key], r)
+				s.mu.Unlock()
+			}
+
+			err = s.Upsert(tt.upsert)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Upsert() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && tt.errTarget != nil {
+				if !errors.Is(err, tt.errTarget) {
+					t.Errorf("Upsert() error = %v, want errors.Is %v", err, tt.errTarget)
+				}
+			}
+		})
 	}
 }
 

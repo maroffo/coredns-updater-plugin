@@ -197,6 +197,13 @@ func (s *Store) Upsert(r Record) error {
 			break
 		}
 	}
+	switch {
+	case s.syncPolicy == PolicyCreateOnly && found:
+		return fmt.Errorf("cannot update record %s (type %s): %w", r.Name, r.Type, ErrPolicyDenied)
+	case s.syncPolicy == PolicyUpdateOnly && !found:
+		return fmt.Errorf("cannot create record %s (type %s): %w", r.Name, r.Type, ErrPolicyDenied)
+	}
+
 	if !found {
 		if s.maxRecords > 0 && s.countLocked() >= s.maxRecords {
 			return fmt.Errorf("record limit of %d reached", s.maxRecords)
