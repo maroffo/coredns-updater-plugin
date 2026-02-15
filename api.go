@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -158,6 +159,10 @@ func (a *APIServer) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.store.Upsert(rec); err != nil {
+		if errors.Is(err, ErrPolicyDenied) {
+			writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: err.Error()})
 		return
 	}
@@ -178,6 +183,10 @@ func (a *APIServer) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.store.Upsert(rec); err != nil {
+		if errors.Is(err, ErrPolicyDenied) {
+			writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: err.Error()})
 		return
 	}
@@ -193,6 +202,10 @@ func (a *APIServer) handleDeleteAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.store.DeleteAll(name); err != nil {
+		if errors.Is(err, ErrPolicyDenied) {
+			writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: err.Error()})
 		return
 	}
@@ -210,6 +223,10 @@ func (a *APIServer) handleDeleteByType(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.store.DeleteByType(name, qtype); err != nil {
+		if errors.Is(err, ErrPolicyDenied) {
+			writeJSON(w, http.StatusForbidden, apiErrorResponse{Error: err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, apiErrorResponse{Error: err.Error()})
 		return
 	}

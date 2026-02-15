@@ -12,12 +12,12 @@ import (
 	"testing"
 )
 
-func newTestAPIHandler(t *testing.T) (*APIServer, *Store) {
+func newTestAPIHandler(t *testing.T, opts ...StoreOption) (*APIServer, *Store) {
 	t.Helper()
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "records.json")
 
-	s, err := NewStore(fp, 0)
+	s, err := NewStore(fp, 0, opts...)
 	if err != nil {
 		t.Fatalf("NewStore() error: %v", err)
 	}
@@ -228,5 +228,97 @@ func TestAPI_ListWithNameFilter(t *testing.T) {
 	}
 	if len(resp.Records) != 1 {
 		t.Errorf("got %d records, want 1", len(resp.Records))
+	}
+}
+
+func TestAPI_Create_PolicyUpdateOnly_Returns403(t *testing.T) {
+	t.Parallel()
+	api, _ := newTestAPIHandler(t, WithSyncPolicy(PolicyUpdateOnly))
+
+	body, _ := json.Marshal(Record{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/records", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	api.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d; body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestAPI_Update_PolicyCreateOnly_Returns403(t *testing.T) {
+	t.Parallel()
+	api, store := newTestAPIHandler(t, WithSyncPolicy(PolicyCreateOnly))
+	// Seed a record directly to bypass policy
+	store.mu.Lock()
+	store.records["a.example.org."] = []Record{
+		{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+	}
+	store.mu.Unlock()
+
+	body, _ := json.Marshal(Record{Name: "a.example.org.", Type: "A", TTL: 600, Value: "10.0.0.1"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/records", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	api.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d; body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestAPI_DeleteAll_PolicyUpsertOnly_Returns403(t *testing.T) {
+	t.Parallel()
+	api, store := newTestAPIHandler(t, WithSyncPolicy(PolicyUpsertOnly))
+	store.mu.Lock()
+	store.records["a.example.org."] = []Record{
+		{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+	}
+	store.mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/records/a.example.org.", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+
+	api.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d; body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestAPI_DeleteByType_PolicyUpsertOnly_Returns403(t *testing.T) {
+	t.Parallel()
+	api, store := newTestAPIHandler(t, WithSyncPolicy(PolicyUpsertOnly))
+	store.mu.Lock()
+	store.records["a.example.org."] = []Record{
+		{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"},
+	}
+	store.mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/records/a.example.org./A", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+
+	api.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d; body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestAPI_Create_PolicySync_Returns201(t *testing.T) {
+	t.Parallel()
+	api, _ := newTestAPIHandler(t)
+
+	body, _ := json.Marshal(Record{Name: "a.example.org.", Type: "A", TTL: 300, Value: "10.0.0.1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/records", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	api.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("status = %d, want %d; body = %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
 }
