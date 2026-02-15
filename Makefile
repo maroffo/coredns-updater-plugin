@@ -95,7 +95,7 @@ proto: ## Generate Go code from proto definitions
 
 .PHONY: proto-lint
 proto-lint: ## Lint proto files
-	@protoc --lint_out=. $(PROTO_DIR)/dynupdate.proto 2>/dev/null || true
+	@protoc --lint_out=. $(PROTO_DIR)/dynupdate.proto
 
 ##@ Quality
 .PHONY: check
