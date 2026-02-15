@@ -1,0 +1,76 @@
+# ABOUTME: Example Corefile with mTLS on both API and gRPC endpoints.
+# ABOUTME: Demonstrates TLS certificate paths, allowed_cn, and max_records limit.
+
+# Production example: mTLS for API and gRPC with separate allowed clients.
+#
+# Certificate setup:
+#   1. Generate a CA:
+#        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+#          -keyout ca-key.pem -out ca.pem -days 3650 -nodes -subj "/CN=DynUpdate CA"
+#
+#   2. Generate server cert signed by the CA:
+#        openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+#          -keyout server-key.pem -out server.csr -nodes -subj "/CN=dns.example.org"
+#        openssl x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem \
+#          -CAcreateserial -out server.pem -days 365 \
+#          -extfile <(printf "subjectAltName=DNS:dns.example.org,DNS:localhost")
+#
+#   3. Generate client cert signed by the CA:
+#        openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+#          -keyout client-key.pem -out client.csr -nodes -subj "/CN=admin-client.example.org"
+#        openssl x509 -req -in client.csr -CA ca.pem -CAkey ca-key.pem \
+#          -CAcreateserial -out client.pem -days 365
+#
+# Auth model:
+#   - API: clients must present a cert with CN=admin-client.example.org
+#   - gRPC: clients authenticate via Bearer token OR cert with allowed CN
+#
+# TLS enforces mTLS when a CA is provided: all connecting clients must
+# present a valid certificate signed by the CA. On top of that, the
+# allowed_cn directive restricts which CNs are authorized to manage records.
+
+example.org:53 {
+    dynupdate example.org. {
+        datafile    /var/lib/coredns/records.json
+        reload      30s
+        max_records 10000
+
+        api {
+            listen     :8443
+            tls        /etc/coredns/tls/server.pem /etc/coredns/tls/server-key.pem /etc/coredns/tls/ca.pem
+            allowed_cn admin-client.example.org
+        }
+
+        grpc {
+            listen     :8444
+            tls        /etc/coredns/tls/server.pem /etc/coredns/tls/server-key.pem /etc/coredns/tls/ca.pem
+            token      grpc-secret-token-change-me
+            allowed_cn grpc-client.example.org automation.example.org
+        }
+
+        fallthrough
+    }
+
+    cache 30
+    forward . 8.8.8.8:53
+    errors
+    log
+    prometheus
+}
+
+# Usage examples:
+#
+#   # Create a record via mTLS API
+#   curl --cert client.pem --key client-key.pem --cacert ca.pem \
+#     -X POST https://dns.example.org:8443/api/v1/records \
+#     -H "Content-Type: application/json" \
+#     -d '{"name":"app.example.org.","type":"A","ttl":300,"value":"10.0.0.1"}'
+#
+#   # List records via gRPC with token
+#   grpcurl -cacert ca.pem \
+#     -H "Authorization: Bearer grpc-secret-token-change-me" \
+#     dns.example.org:8444 dynupdate.v1.DynUpdateService/List
+#
+#   # List records via gRPC with client cert
+#   grpcurl -cert client.pem -key client-key.pem -cacert ca.pem \
+#     dns.example.org:8444 dynupdate.v1.DynUpdateService/List
