@@ -68,7 +68,7 @@ func (d *DynUpdate) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 	// Filter by query type
 	typeRecords := filterByType(allRecords, qtype)
 	if len(typeRecords) > 0 {
-		rcode, retErr = d.writeAnswer(w, r, typeRecords)
+		rcode, retErr = d.writeAnswer(w, r, recordsToRR(typeRecords))
 		return rcode, retErr
 	}
 
@@ -141,24 +141,24 @@ func filterByType(records []Record, qtype uint16) []Record {
 	return result
 }
 
-func (d *DynUpdate) writeAnswer(w dns.ResponseWriter, r *dns.Msg, answers interface{}) (int, error) {
+func recordsToRR(records []Record) []dns.RR {
+	rrs := make([]dns.RR, 0, len(records))
+	for _, rec := range records {
+		rr, err := rec.ToRR()
+		if err != nil {
+			log.Errorf("converting record to RR: %v", err)
+			continue
+		}
+		rrs = append(rrs, rr)
+	}
+	return rrs
+}
+
+func (d *DynUpdate) writeAnswer(w dns.ResponseWriter, r *dns.Msg, answers []dns.RR) (int, error) {
 	msg := new(dns.Msg)
 	msg.SetReply(r)
 	msg.Authoritative = true
-
-	switch a := answers.(type) {
-	case []Record:
-		for _, rec := range a {
-			rr, err := rec.ToRR()
-			if err != nil {
-				log.Errorf("converting record to RR: %v", err)
-				continue
-			}
-			msg.Answer = append(msg.Answer, rr)
-		}
-	case []dns.RR:
-		msg.Answer = append(msg.Answer, a...)
-	}
+	msg.Answer = append(msg.Answer, answers...)
 
 	if err := w.WriteMsg(msg); err != nil {
 		return dns.RcodeServerFailure, fmt.Errorf("writing response: %w", err)
